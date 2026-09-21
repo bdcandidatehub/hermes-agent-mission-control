@@ -49,7 +49,32 @@ if (DB_URL.startsWith("prisma://") || DB_URL.startsWith("prisma+")) {
 }
 // Cloud Postgres (Prisma Postgres/Neon/Supabase/RDS) needs SSL; localhost doesn't.
 const isLocal = /@(localhost|127\.0\.0\.1)/.test(DB_URL);
-const pool = new pg.Pool({ connectionString: DB_URL, max: 4, ssl: isLocal ? undefined : { rejectUnauthorized: false } });
+// Verify the server certificate by default. Only set PGSSL_INSECURE=1 if your provider uses a
+// self-signed chain you can't add to the trust store (not recommended).
+const sslOpt = isLocal ? undefined : { rejectUnauthorized: process.env.PGSSL_INSECURE !== "1" };
+const pool = new pg.Pool({ connectionString: DB_URL, max: 4, ssl: sslOpt });
+
+/* Approval policy. Mirrors src/lib/hermes-policy.ts — keep the two in sync.
+ * The bridge re-checks it so a row inserted straight into Postgres can't skip approval:
+ *   auto    → may run when status is queued or approved
+ *   approve → runs ONLY when status is approved
+ * Unknown kinds never run. */
+const KIND_TIERS = {
+  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto",
+  "cron.create": "approve", "cron.edit": "approve", "cron.run": "approve", "cron.remove": "approve",
+  "cron.pause": "auto", "cron.resume": "auto",
+};
+const canRun = (r) => {
+  const tier = Object.prototype.hasOwnProperty.call(KIND_TIERS, r.kind) ? KIND_TIERS[r.kind] : null;
+  if (!tier) return false;
+  return tier === "approve" ? r.status === "approved" : r.status === "queued" || r.status === "approved";
+};
+// argv is passed without a shell, but a leading "-" would still be read as a flag.
+const cliArg = (v, what) => {
+  const s = v == null ? "" : String(v);
+  if (!s || s.startsWith("-") || s.includes("\0") || s.length > 20000) throw new Error(`invalid ${what}`);
+  return s;
+};
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const q = (text, params) => pool.query(text, params);
@@ -188,18 +213,29 @@ async function mirrorWiki() {
   if (seen.size) await q(`DELETE FROM "HermesMemory" WHERE id <> ALL($1::text[])`, [[...seen]]);
   else await q(`DELETE FROM "HermesMemory"`);
 }
+const oneLine = (v) => String(v ?? "").replace(/[\r\n]+/g, " ").trim();
+const listLine = (arr) => (Array.isArray(arr) ? arr : []).map((x) => oneLine(x).replace(/[,\[\]]/g, " ").trim()).filter(Boolean).join(", ");
 function writeWikiEntry(e) {
-  const rel = e.path || `${e.type || "note"}s/${e.id}.md`;
-  const full = path.join(WIKI_DIR, rel);
+  const root = path.resolve(WIKI_DIR);
+  const slug = oneLine(e.id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+  if (!slug) throw new Error("wiki entry needs an id");
+  const rel = String(e.path || `${oneLine(e.type || "note").toLowerCase().replace(/[^a-z0-9]+/g, "") || "note"}s/${slug}.md`).replace(/\\/g, "/");
+  // Confine writes to the wiki dir: relative, .md only, no dot-segments, no .git.
+  if (rel.startsWith("/") || !rel.endsWith(".md") || rel.split("/").some((s) => s === ".." || s === "." || s === "" || s === ".git"))
+    throw new Error("invalid wiki path");
+  const full = path.resolve(root, rel);
+  if (!full.startsWith(root + path.sep)) throw new Error("invalid wiki path");
+  // Refuse to write through a symlink that escapes the wiki dir.
   fs.mkdirSync(path.dirname(full), { recursive: true });
+  if (!fs.realpathSync(path.dirname(full)).startsWith(fs.realpathSync(root))) throw new Error("invalid wiki path");
   const now = new Date().toISOString().slice(0, 10);
   const lines = [
-    "---", `id: ${e.id}`, `type: ${e.type || "note"}`, `title: ${e.title}`,
-    `status: ${e.status || "active"}`,
-    e.confidence ? `confidence: ${e.confidence}` : null,
-    `provenance: ${e.provenance || "dashboard"}`,
-    `tags: [${(e.tags || []).join(", ")}]`, `links: [${(e.links || []).join(", ")}]`,
-    `updated: ${now}`, "---", "", e.body || "", "",
+    "---", `id: ${slug}`, `type: ${oneLine(e.type || "note")}`, `title: ${oneLine(e.title)}`,
+    `status: ${oneLine(e.status || "active")}`,
+    e.confidence ? `confidence: ${oneLine(e.confidence)}` : null,
+    `provenance: ${oneLine(e.provenance || "dashboard")}`,
+    `tags: [${listLine(e.tags)}]`, `links: [${listLine(e.links)}]`,
+    `updated: ${now}`, "---", "", String(e.body || ""), "",
   ].filter((l) => l !== null);
   fs.writeFileSync(full, lines.join("\n"), "utf8");
   return rel;
@@ -241,19 +277,16 @@ async function runRequest(r) {
   try {
     let result = "";
     if (r.kind === "oneshot" || r.kind === "chat") {
-      result = (await hermes(["-z", r.prompt || r.title], { timeout: RUN_TIMEOUT_MS })).trim();
+      result = (await hermes(["-z", String(r.prompt || r.title)], { timeout: RUN_TIMEOUT_MS })).trim();
     } else if (r.kind === "kanban") {
-      result = (await hermes(["kanban", "--board", BOARD, "create", "--json", r.title], { timeout: 20000 })).trim();
+      result = (await hermes(["kanban", "--board", BOARD, "create", "--json", cliArg(r.title, "title")], { timeout: 20000 })).trim();
     } else if (r.kind.startsWith("cron.")) {
       const op = r.kind.split(".")[1];
       const a = JSON.parse(r.prompt || "{}");
+      const target = () => cliArg(a.id || a.name, "cron id/name");
       const argv =
-        op === "create" ? ["cron", "create", a.schedule, a.prompt || a.name].filter(Boolean)
-        : op === "run"    ? ["cron", "run", a.id || a.name]
-        : op === "pause"  ? ["cron", "pause", a.id || a.name]
-        : op === "resume" ? ["cron", "resume", a.id || a.name]
-        : op === "remove" ? ["cron", "remove", a.id || a.name]
-        : op === "edit"   ? ["cron", "edit", a.id || a.name]
+        op === "create" ? ["cron", "create", cliArg(a.schedule, "schedule"), cliArg(a.prompt || a.name, "prompt")]
+        : ["run", "pause", "resume", "remove", "edit"].includes(op) ? ["cron", op, target()]
         : null;
       if (!argv) throw new Error(`unknown cron op ${op}`);
       result = (await hermes(argv, { timeout: 20000 })).trim();
@@ -284,9 +317,23 @@ async function runRequest(r) {
 
 async function processQueue() {
   const { rows } = await q(
-    `SELECT * FROM "AgentRequest" WHERE status IN ('queued','approved') ORDER BY "createdAt" ASC LIMIT 3`
+    `SELECT * FROM "AgentRequest" WHERE status IN ('queued','approved') ORDER BY "createdAt" ASC LIMIT 20`
   );
-  for (const r of rows) await runRequest(r);
+  let ran = 0;
+  for (const r of rows) {
+    if (!canRun(r)) {
+      // Unknown kind, or an approve-tier request that was never approved: never run it.
+      if (!Object.prototype.hasOwnProperty.call(KIND_TIERS, r.kind)) {
+        await q(`UPDATE "AgentRequest" SET status='failed', error=$2, "finishedAt"=now(), "updatedAt"=now() WHERE id=$1`,
+          [r.id, `unsupported kind: ${String(r.kind).slice(0, 60)}`]);
+      } else {
+        await q(`UPDATE "AgentRequest" SET status='awaiting_approval', "updatedAt"=now() WHERE id=$1 AND status='queued'`, [r.id]);
+      }
+      continue;
+    }
+    await runRequest(r);
+    if (++ran >= 3) break;
+  }
 }
 
 /* ─────────────── loops ─────────────── */

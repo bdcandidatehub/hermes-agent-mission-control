@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { initialStatus, MAX_PROMPT_CHARS, safeWikiPath, slugify } from "@/lib/hermes-policy";
 
 // GET ?q=&type=&status= → list/search wiki entries (mirrored by the bridge)
 export async function GET(req: Request) {
@@ -29,18 +30,25 @@ export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}));
   const title = (b.title || "").toString().trim();
   if (!title) return NextResponse.json({ error: "title required" }, { status: 400 });
-  const slug = (b.id || b.path || title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")).toString();
+  const slug = slugify((b.id || title).toString());
+  if (!slug) return NextResponse.json({ error: "could not derive an id from the title" }, { status: 400 });
+  const path = safeWikiPath((b.path || `${slugify((b.type || "note").toString()) || "note"}s/${slug}.md`).toString());
+  if (!path) return NextResponse.json({ error: "invalid path (must be a relative .md path inside the wiki)" }, { status: 400 });
+  const body = (b.body || "").toString();
+  if (body.length > MAX_PROMPT_CHARS) return NextResponse.json({ error: "body too long" }, { status: 413 });
+  const oneLine = (v: unknown) => String(v ?? "").replace(/[\r\n]+/g, " ").trim();
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(oneLine).filter(Boolean).slice(0, 50) : []);
   const entry = {
     id: slug,
-    path: (b.path || `${b.type || "note"}s/${slug}.md`).toString(),
-    type: (b.type || "note").toString(),
-    title,
-    status: (b.status || "active").toString(),
-    confidence: b.confidence ?? null,
-    provenance: b.provenance ?? "dashboard",
-    tags: Array.isArray(b.tags) ? b.tags : [],
-    links: Array.isArray(b.links) ? b.links : [],
-    body: (b.body || "").toString(),
+    path,
+    type: oneLine(b.type || "note"),
+    title: oneLine(title),
+    status: oneLine(b.status || "active"),
+    confidence: b.confidence != null ? oneLine(b.confidence) : null,
+    provenance: oneLine(b.provenance ?? "dashboard"),
+    tags: list(b.tags),
+    links: list(b.links),
+    body,
   };
   const row = await prisma.agentRequest.create({
     data: {
@@ -49,7 +57,7 @@ export async function POST(req: Request) {
       title: `Memory: ${title}`.slice(0, 200),
       prompt: JSON.stringify(entry),
       sideEffecting: false,
-      status: "queued",
+      status: initialStatus("memory.write", false)!,
     },
   });
   return NextResponse.json({ request: row, entry });

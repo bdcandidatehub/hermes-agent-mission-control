@@ -69,7 +69,7 @@ environment variables.
 - Content OS — an X / Twitter content pipeline (drafts, scoring, scheduling)
 - Longform + YouTube script studios
 - Client Pulse — a client-health tracking board (bring your own data ingestion)
-- Agents roster, Garden, and Watchlist Radar
+- Agents roster and Watchlist Radar
 
 > Some features need your own API keys (YouTube, X/Twitter, OpenAI, etc.). They are
 > all optional and configured via env — the core dashboard runs without them.
@@ -126,7 +126,6 @@ access to Postgres and your local `hermes` CLI. See
 - **Styling:** Tailwind CSS v4
 - **Data:** Prisma ORM + PostgreSQL
 - **Auth:** NextAuth with Google login (email allowlist)
-- **Charts / DnD:** Recharts, react-dnd
 - **Deploy:** Vercel (website) + launchd/systemd (bridge)
 - **Agent:** [Hermes](https://github.com/NousResearch/hermes-agent) `hermes` CLI
 
@@ -233,9 +232,15 @@ ONBOARDING.md   copy-paste prompt to have your Hermes install this for you
 
 Hermy HQ is designed so the agent can act, but not surprise you:
 
-- Requests that have side effects are marked `sideEffecting` and land in the
-  **Approval Inbox** as `awaiting_approval`. The bridge will not run them until you
-  approve.
+- Whether a request needs approval is decided **server-side by its `kind`**
+  (`src/lib/hermes-policy.ts`), never by the client. Cron create/edit/run/remove
+  always land in the **Approval Inbox** as `awaiting_approval`; a client can escalate
+  a request but can't skip approval. The bridge re-checks the same policy before
+  running anything, so a row inserted directly into Postgres can't skip it either.
+- Memory-wiki writes are confined to `HERMES_WIKI` (relative `.md` paths only).
+- Machine-to-machine calls use `INTERNAL_API_SECRET` via the `x-internal-secret`
+  header. It bypasses login for every API route, so keep it secret and rotate it if
+  it leaks.
 - The bridge lives on your machine and only reaches out to Postgres and the local
   `hermes` CLI — nothing inbound.
 - Login is Google OAuth gated to the emails in `ALLOWED_EMAILS`.

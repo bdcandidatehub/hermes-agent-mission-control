@@ -15,7 +15,6 @@ const pathLabels: Record<string, string> = {
   "/client-pulse": "Client Pulse",
   "/agents": "Agents",
   "/ideas": "Ideas",
-  "/garden": "Garden",
   "/tasks": "Tasks",
 };
 

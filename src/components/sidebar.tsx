@@ -9,7 +9,6 @@ import {
   Play,
   Bot,
   Lightbulb,
-  Flower2,
   FileText,
   ClipboardList,
   HeartPulse,
@@ -50,7 +49,6 @@ const navGroups = [
       { href: "/agents", label: "Agents", icon: Bot },
       { href: "/memory-wiki", label: "Memory Wiki", icon: BookOpen },
       { href: "/ideas", label: "Ideas", icon: Lightbulb },
-      { href: "/garden", label: "Garden", icon: Flower2 },
     ],
   },
 ];

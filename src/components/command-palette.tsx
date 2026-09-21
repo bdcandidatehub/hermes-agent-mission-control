@@ -16,7 +16,6 @@ import {
   Activity,
   Bot,
   Lightbulb,
-  Sprout,
   ListChecks,
   Sparkles,
   CornerDownLeft,
@@ -39,7 +38,6 @@ const NAV: NavItem[] = [
   { label: "Client Pulse", href: "/client-pulse", icon: Activity },
   { label: "Agents", href: "/agents", icon: Bot },
   { label: "Ideas", href: "/ideas", icon: Lightbulb },
-  { label: "Garden", href: "/garden", icon: Sprout },
   { label: "Tasks", href: "/tasks", icon: ListChecks },
   { label: "Hermes", href: "/hermes", icon: Sparkles },
 ];
