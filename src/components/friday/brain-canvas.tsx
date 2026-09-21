@@ -88,8 +88,13 @@ export function BrainCanvas({ state, level, className }: { state: BrainState; le
       energy += (target - energy) * (still ? 1 : 1 - Math.exp(-dt * 7));
       rot += dt * (0.11 + think * 0.5 + speak * 0.08);
 
-      const narrow = w / dpr < 380; // phones: a slightly smaller brain leaves room for the header and the talk button
-      const cx = w / 2, cy = h / 2, R = Math.min(w, h) * (narrow ? 0.3 : 0.335) * (1 + speak * voice * 0.07 + energy * 0.02);
+      // Framing: a wide, short stage seats the brain a little high (the talk button sits below it) and stretches the
+      // orbits sideways to use the width; a phone-sized stage gets a slightly smaller brain.
+      const wide = w / h > 1.5;
+      const narrow = w / dpr < 380;
+      const stretch = wide ? Math.min(2.6, (w / h) * 0.62) : 1;
+      const cx = w / 2, cy = wide ? h * 0.44 : h / 2;
+      const R = (wide ? h * 0.345 : Math.min(w, h) * (narrow ? 0.3 : 0.335)) * (1 + speak * voice * 0.07 + energy * 0.02);
       const col = mix(CYAN, VIOLET, think * 0.85);
       ctx.clearRect(0, 0, w, h);
       ctx.globalCompositeOperation = "lighter";
@@ -99,7 +104,10 @@ export function BrainCanvas({ state, level, className }: { state: BrainState; le
       g.addColorStop(0, rgba(col, 0.2 + energy * 0.3));
       g.addColorStop(0.5, rgba(col, 0.07 + energy * 0.1));
       g.addColorStop(1, rgba(col, 0));
-      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      ctx.save();
+      ctx.translate(cx, cy); ctx.scale(stretch, 1); ctx.translate(-cx, -cy); // wider glow on a wide stage
+      ctx.fillStyle = g; ctx.fillRect(cx - w, 0, w * 2, h);
+      ctx.restore();
 
       // orbits: faint 3D rings with a few bright travellers
       const o = { x: 0, y: 0, d: 0 };
@@ -110,6 +118,7 @@ export function BrainCanvas({ state, level, className }: { state: BrainState; le
           const a = (i / steps) * Math.PI * 2;
           const pt = orbitPoint(ring, a);
           project(pt[0], pt[1], pt[2], cx, cy, R, o);
+          o.x = cx + (o.x - cx) * stretch;
           if (i === 0) ctx.moveTo(o.x, o.y); else ctx.lineTo(o.x, o.y);
         }
         ctx.strokeStyle = rgba(col, 0.07 + energy * 0.1);
@@ -119,6 +128,7 @@ export function BrainCanvas({ state, level, className }: { state: BrainState; le
           const a = t * ring.speed * (1 + think * 2.5) + (d / ring.dots) * Math.PI * 2;
           const pt = orbitPoint(ring, a);
           project(pt[0], pt[1], pt[2], cx, cy, R, o);
+          o.x = cx + (o.x - cx) * stretch;
           ctx.beginPath();
           ctx.arc(o.x, o.y, dpr * (1.4 + o.d * 1.6), 0, Math.PI * 2);
           ctx.fillStyle = rgba(WHITE, 0.35 + o.d * 0.5);

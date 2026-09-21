@@ -1,8 +1,9 @@
 "use client";
 
-/* Friday: talk to your chief of staff from the top of the dashboard. A living brain on the left (it reacts to whether
-   she's listening, thinking or speaking, and moves with her actual voice), the conversation on the right. Everything
-   she says is also on screen; voice and motion are additions to a fully working text chat. */
+/* Friday: talk to your chief of staff from the top of the dashboard. A full-width stage with a living brain (it reacts
+   to whether she's listening, thinking or speaking, and moves with her actual voice), and the conversation stacked
+   beneath it in a readable centered column. Everything she says is also on screen; voice and motion are additions
+   to a fully working text chat. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Loader2, Mic, RotateCcw, Square, Volume2, VolumeX } from "lucide-react";
@@ -49,7 +50,7 @@ export function FridayPanel() {
   const listener = useRef<Listener | null>(null);
   const spoken = useRef<Set<string>>(new Set());
   const firstLoad = useRef(true);
-  const scroller = useRef<HTMLOListElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const voiceRef = useRef({ voiceOn, serverVoice });
   useEffect(() => { voiceRef.current = { voiceOn, serverVoice }; }, [voiceOn, serverVoice]);
 
@@ -158,15 +159,15 @@ export function FridayPanel() {
       className="panel overflow-hidden"
       onKeyDown={(e) => { if (e.key === "Escape") stopAll(); }}
     >
-      <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+      <div>
         {/* ── stage: the brain ── */}
         <div
-          className="relative min-h-[390px] lg:min-h-[460px]"
+          className="relative min-h-[390px] md:min-h-[340px]"
           style={{ background: "radial-gradient(120% 90% at 50% 44%, rgba(22,112,162,0.34) 0%, rgba(9,32,50,0.62) 46%, #060b10 100%)" }}
         >
           <BrainCanvas state={brainState} level={level} className="absolute inset-0" />
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-28" style={{ background: "linear-gradient(to bottom, rgba(6,11,16,0.78), rgba(6,11,16,0))" }} />
-          <div className="relative z-10 flex h-full min-h-[390px] flex-col justify-between p-5 lg:min-h-[460px]">
+          <div className="relative z-10 flex h-full min-h-[390px] flex-col justify-between p-5 md:min-h-[340px] md:px-6">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-[22px] font-semibold tracking-[-0.02em] text-[var(--text)]">Friday</h2>
@@ -211,12 +212,13 @@ export function FridayPanel() {
         </div>
 
         {/* ── conversation ── */}
-        <div className="flex min-h-[340px] flex-col border-t border-[var(--line)] lg:border-l lg:border-t-0">
-          <ol ref={scroller} role="log" aria-live="polite" aria-label="Conversation with Friday" className="flex-1 space-y-5 overflow-y-auto p-5 lg:max-h-[404px]">
+        <div className="flex flex-col border-t border-[var(--line)]">
+          <div ref={scroller} className="max-h-[320px] overflow-y-auto">
+          <ol role="log" aria-live="polite" aria-label="Conversation with Friday" className="mx-auto w-full max-w-3xl space-y-5 p-5">
             {!loaded ? null : turns.length === 0 ? (
-              <li className="flex h-full min-h-[200px] flex-col justify-center gap-4">
+              <li className="flex min-h-[150px] flex-col items-center justify-center gap-4 text-center">
                 <p className="text-[17px] font-medium leading-snug tracking-[-0.01em] text-[var(--text)]">Ask Friday what needs you today.</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   {SUGGESTIONS.map((s) => (
                     <button key={s} type="button" onClick={() => send(s)} disabled={sending}
                       className={`rounded-full border border-white/12 px-3.5 py-2 text-[13px] text-[var(--text-2)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text)] disabled:opacity-50 ${focusRing}`}>
@@ -257,11 +259,13 @@ export function FridayPanel() {
               ))
             )}
           </ol>
+          </div>
 
           <form
             className="border-t border-[var(--line)] p-4"
             onSubmit={(e) => { e.preventDefault(); void send(input); }}
           >
+            <div className="mx-auto w-full max-w-3xl">
             {error && <p role="alert" className="mb-2.5 text-[13px] text-[var(--down)]">{error}</p>}
             {!error && note && <p role="status" className="mb-2.5 text-[13px] text-[var(--text-2)]">{note}</p>}
             <div className="flex items-center gap-2">
@@ -277,6 +281,7 @@ export function FridayPanel() {
               >
                 {sending ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
               </button>
+            </div>
             </div>
           </form>
         </div>
