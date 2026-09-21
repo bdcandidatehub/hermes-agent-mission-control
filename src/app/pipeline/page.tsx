@@ -2,9 +2,10 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronRight, Plus, X } from "lucide-react";
+import { ChevronRight, Plus, Upload, X } from "lucide-react";
 import { Button, EmptyState, Panel, Pill, SectionHeader, Skeleton } from "@/components/ui/kit";
 import { DealDrawer, INPUT, type PlaybookLite, type VentureLite } from "@/components/deal-drawer";
+import { ImportModal } from "@/components/import-modal";
 import { CONSENT_BASES, fmtMoney, stageLabel } from "@/lib/crm";
 
 interface Deal {
@@ -102,6 +103,7 @@ function Board() {
   const [deals, setDeals] = useState<Deal[] | null>(null);
   const [playbooks, setPlaybooks] = useState<PlaybookLite[]>([]);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
@@ -153,7 +155,7 @@ function Board() {
             ))}</span>
           ) : venture.name
         }
-        action={<Button variant="primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New deal</Button>}
+        action={<div className="flex gap-2"><Button onClick={() => setImporting(true)}><Upload className="w-4 h-4" />Import CSV</Button><Button variant="primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New deal</Button></div>}
       />
       <p className="-mt-3 text-[12.5px] text-[var(--text-3)] num">{deals ? `${deals.length} deals · ${fmtMoney(totalOpen)}${venture.recurring ? "/mo" : ""} open` : "Loading…"}</p>
 
@@ -201,6 +203,7 @@ function Board() {
         })}
       </div>
 
+      {importing && <ImportModal venture={venture} onClose={() => setImporting(false)} onImported={loadDeals} />}
       {creating && <NewDealModal venture={venture} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); loadDeals(); openDeal(id); }} />}
       {openId && <DealDrawer key={openId} dealId={openId} venture={venture} playbooks={playbooks} onClose={() => openDeal(null)} onChanged={loadDeals} />}
     </div>

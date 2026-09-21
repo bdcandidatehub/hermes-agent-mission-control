@@ -81,7 +81,7 @@ npm run db:seed
 ```
 `db:seed` adds the CandidateHub venture and its playbooks (safe to re-run). Ask the
 operator whether they want to edit `prisma/seed.ts` (their own offer, voice, stages)
-before seeding. Confirm `db push` reports the schema is in sync. If it fails, the `DATABASE_URL` is almost
+before seeding. If they already have a prospect list, mention the **Import CSV** button on the Pipeline page. Confirm `db push` reports the schema is in sync. If it fails, the `DATABASE_URL` is almost
 always the cause — recheck it with the operator.
 
 ### Step 5 — Run locally to verify

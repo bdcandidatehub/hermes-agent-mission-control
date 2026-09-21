@@ -14,7 +14,7 @@ export type ConsentBasis = (typeof CONSENT_BASES)[number];
 
 // Playbooks that produce outbound copy. They are refused for unsubscribed contacts
 // and flagged when the contact has no recorded CASL consent basis.
-export const OUTREACH_PLAYBOOKS = new Set(["draft-intro-email", "draft-linkedin-note", "draft-followup"]);
+export const OUTREACH_PLAYBOOKS = new Set(["draft-intro-email", "draft-linkedin-note", "draft-followup", "draft-reply"]);
 
 export const allStages = (v: Pick<VentureCfg, "stages" | "wonStage" | "lostStage">) => [...v.stages, v.wonStage, v.lostStage];
 

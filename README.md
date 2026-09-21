@@ -54,7 +54,14 @@ environment variables.
 - **Today** (`/`): MRR, open pipeline, follow-ups that need you, and anything waiting on your approval
 - **Pipeline** (`/pipeline`): a kanban board per *venture* (a revenue stream such as a SaaS, web projects, or consulting). Ventures are config: an ordered list of stages plus playbooks, so a new stream needs no new code
 - **Shared CRM**: companies and contacts are shared across ventures, so one prospect can be cross-sold. Contacts carry a CASL consent basis and an unsubscribe flag
-- **Playbooks**: reusable Hermes prompts (research a company, draft an intro email, draft a LinkedIn note, prep a demo) rendered against a deal and run through the bridge. They only produce drafts; nothing is ever sent for you
+- **Playbooks**: reusable Hermes prompts (research a company, draft an intro email, LinkedIn note, follow-up or reply, prep a demo) rendered against a deal and run through the bridge. They only produce drafts; nothing is ever sent for you
+- **CSV import**: drop in a prospect list (any spreadsheet export with a Company column). You get a dry-run preview first; re-importing is safe because companies, contacts and deals are matched, not duplicated, and unsubscribed contacts are skipped
+- **Outreach loop**: a draft comes back in the deal drawer with **Open in Gmail** (a prefilled compose window: you review and press Send) and **I sent it**. Logging outreach or a reply moves the deal, refreshes the next action, and sets a follow-up 4 business days out. Each draft can only be logged once
+- **Funnel**: the Today page shows sent, replies (with reply rate) and stage entries for the last 7 or 30 days, straight from the activity log
+
+> **Stage convention.** For every venture, the first three stages mean *new lead → first touch made → they answered*.
+> Logging outreach moves a new lead to stage 2, and a reply moves stage 1 or 2 to stage 3. Later stages (demo, trial, …)
+> only move when you move them. Name your own stages however you like, but keep that order.
 
 **Hermes control hub** (`/hermes`)
 - Dispatch one-shot prompts or kanban tasks to the agent

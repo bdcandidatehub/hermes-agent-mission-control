@@ -94,9 +94,28 @@ model Deal {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  activities     Activity[]
+
   @@index([ventureKey, stage])
   @@index([nextActionDue])
   @@index([companyId])
+}
+
+// Everything that happens on a deal: outreach you sent, replies, calls, notes, and stage changes.
+// The weekly funnel on the Today page is computed from these rows.
+model Activity {
+  id         String   @id @default(cuid())
+  dealId     String
+  deal       Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  contactId  String?
+  type       String                       // email_sent | linkedin_sent | reply | call | meeting | note | stage
+  summary    String   @default("")
+  meta       Json?                        // stage: { from, to }
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([dealId, occurredAt])
+  @@index([type, occurredAt])
 }
 
 // A reusable "Hermes skill": a prompt template rendered with deal/company/contact context.

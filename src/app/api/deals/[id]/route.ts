@@ -11,7 +11,8 @@ export async function GET(_req: Request, { params }: Ctx) {
   const deal = await prisma.deal.findUnique({ where: { id }, include: { company: true, contact: true } });
   if (!deal) return NextResponse.json({ error: "not found" }, { status: 404 });
   const requests = await prisma.agentRequest.findMany({ where: { dealId: id }, orderBy: { createdAt: "desc" }, take: 20 });
-  return NextResponse.json({ deal, requests });
+  const activities = await prisma.activity.findMany({ where: { dealId: id }, orderBy: { occurredAt: "desc" }, take: 50 });
+  return NextResponse.json({ deal, requests, activities });
 }
 
 // PATCH { stage?, title?, valueCents?|value?, nextAction?, nextActionDue?, notes?, lostReason? }
@@ -52,10 +53,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
     stageEvent = `${existing.company.name}: ${stageLabel(existing.stage)} → ${stageLabel(b.stage)}`;
   }
 
-  const deal = await prisma.deal.update({
-    where: { id }, data,
-    include: { company: { select: { id: true, name: true } }, contact: { select: { id: true, name: true, title: true } } },
-  });
+  const [deal] = await prisma.$transaction([
+    prisma.deal.update({
+      where: { id }, data,
+      include: { company: { select: { id: true, name: true } }, contact: { select: { id: true, name: true, title: true } } },
+    }),
+    ...(data.stage
+      ? [prisma.activity.create({ data: { dealId: id, contactId: existing.contactId, type: "stage", meta: { from: existing.stage, to: data.stage as string } } })]
+      : []),
+  ]);
   if (stageEvent)
     await prisma.agentEvent.create({
       data: {

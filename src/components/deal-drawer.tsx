@@ -4,9 +4,10 @@
    Playbooks only produce drafts/research; nothing here sends anything. */
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, Loader2, Play, Trash2, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2, Mail, Play, Trash2, X } from "lucide-react";
 import { Button, Panel, Pill } from "@/components/ui/kit";
 import { CONSENT_BASES, fmtMoney, stageLabel } from "@/lib/crm";
+import { ACTIVITY_LABEL, LOGGABLE_TYPES, gmailComposeUrl, parseDraft } from "@/lib/outreach";
 
 export interface PlaybookLite { key: string; name: string; description: string; needsInput: boolean }
 export interface VentureLite { key: string; name: string; stages: string[]; wonStage: string; lostStage: string; recurring: boolean }
@@ -15,14 +16,16 @@ interface Run {
   id: string; title: string; status: string; result: string | null; error: string | null;
   playbookKey: string | null; createdAt: string;
 }
+interface Activity { id: string; type: string; summary: string; meta: { from?: string; to?: string; requestId?: string } | null; occurredAt: string }
 interface Detail {
   deal: {
     id: string; title: string; stage: string; valueCents: number; nextAction: string | null; nextActionDue: string | null;
     notes: string | null; lostReason: string | null;
     company: { id: string; name: string; website: string | null; industry: string | null; size: string | null; location: string | null };
-    contact: { id: string; name: string; email: string | null; title: string | null; consentBasis: string; unsubscribedAt: string | null } | null;
+    contact: { id: string; name: string; email: string | null; title: string | null; linkedinUrl: string | null; consentBasis: string; unsubscribedAt: string | null } | null;
   };
   requests: Run[];
+  activities: Activity[];
 }
 
 export const INPUT =
@@ -33,8 +36,24 @@ const STATUS_TONE: Record<string, "up" | "down" | "warn" | "accent" | "neutral">
   done: "up", failed: "down", rejected: "down", awaiting_approval: "warn", running: "accent", queued: "neutral", approved: "accent",
 };
 
-function RunCard({ run }: { run: Run }) {
+const EMAIL_PLAYBOOKS = new Set(["draft-intro-email", "draft-followup", "draft-reply"]);
+const safeHttpUrl = (u: string | null | undefined) => (u && /^https?:\/\//i.test(u) ? u : null);
+
+interface Handoff {
+  email: string | null; linkedinUrl: string | null; unsubscribed: boolean;
+  logged: boolean; onLogSent: (type: "email_sent" | "linkedin_sent", summary: string) => Promise<void>;
+}
+
+function RunCard({ run, handoff }: { run: Run; handoff: Handoff }) {
   const [copied, setCopied] = useState(false);
+  const [logging, setLogging] = useState(false);
+  const isEmail = !!run.playbookKey && EMAIL_PLAYBOOKS.has(run.playbookKey);
+  const isLinkedIn = run.playbookKey === "draft-linkedin-note";
+  const draft = run.result && (isEmail || isLinkedIn) ? parseDraft(run.result) : null;
+  const gmail = draft && isEmail ? gmailComposeUrl({ to: handoff.email, subject: draft.subject, body: draft.body }) : null;
+  const profile = safeHttpUrl(handoff.linkedinUrl);
+  const actionCls = "inline-flex items-center gap-1.5 text-[12px] text-[var(--text-3)] hover:text-[var(--text)]";
+
   return (
     <div className="rounded-[var(--r-md,10px)] border border-white/[0.07] p-3 space-y-2">
       <div className="flex items-center justify-between gap-3">
@@ -51,14 +70,43 @@ function RunCard({ run }: { run: Run }) {
       {run.result && (
         <>
           <pre className="whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-[var(--text-2)] max-h-64 overflow-auto font-sans">{run.result}</pre>
-          <button
-            className="inline-flex items-center gap-1.5 text-[12px] text-[var(--text-3)] hover:text-[var(--text)]"
-            onClick={async () => {
-              try { await navigator.clipboard.writeText(run.result ?? ""); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
-            }}
-          >
-            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}{copied ? "Copied" : "Copy"}
-          </button>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <button
+              className={actionCls}
+              onClick={async () => {
+                try { await navigator.clipboard.writeText(run.result ?? ""); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
+              }}
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}{copied ? "Copied" : "Copy"}
+            </button>
+            {draft && !handoff.unsubscribed && (
+              <>
+                {gmail && (
+                  <a className={actionCls} href={gmail.url} target="_blank" rel="noopener noreferrer">
+                    <Mail className="w-3.5 h-3.5" />Open in Gmail<ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+                {isLinkedIn && profile && (
+                  <a className={actionCls} href={profile} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-3.5 h-3.5" />Open profile
+                  </a>
+                )}
+                {handoff.logged ? (
+                  <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--up)]"><Check className="w-3.5 h-3.5" />Logged as sent</span>
+                ) : (
+                  <button
+                    className={actionCls} disabled={logging}
+                    onClick={async () => { setLogging(true); await handoff.onLogSent(isEmail ? "email_sent" : "linkedin_sent", draft.subject || run.title); setLogging(false); }}
+                  >
+                    {logging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}I sent it
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+          {gmail?.truncated && <p className="text-[11.5px] text-[var(--warn)]">Long draft: the Gmail link is shortened. Use Copy for the full text.</p>}
+          {draft && handoff.unsubscribed && <p className="text-[11.5px] text-[var(--down)]">This contact has unsubscribed. Don&apos;t send this.</p>}
+          {isEmail && draft && !handoff.email && <p className="text-[11.5px] text-[var(--text-3)]">No email address on this contact, so Gmail opens without a recipient.</p>}
         </>
       )}
     </div>
@@ -75,6 +123,8 @@ export function DealDrawer({
   const [notice, setNotice] = useState<string | null>(null);
   const [input, setInput] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [actType, setActType] = useState<string>("note");
+  const [actText, setActText] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -104,6 +154,17 @@ export function DealDrawer({
     setErr(null);
     const r = await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) { setErr((await r.json().catch(() => ({}))).error ?? "Update failed"); return false; }
+    await load(); onChanged(); return true;
+  }
+
+  async function logActivity(type: string, summary: string, requestId?: string) {
+    setErr(null);
+    const r = await fetch(`/api/deals/${dealId}/activities`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, summary, requestId }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { setErr(j.error ?? "Couldn't log that"); return false; }
+    if (j.advancedTo) setNotice(`Moved to ${stageLabel(j.advancedTo)}. Follow-up set on the deal.`);
     await load(); onChanged(); return true;
   }
 
@@ -142,6 +203,7 @@ export function DealDrawer({
         {d && (
           <>
             <Panel className="p-4 space-y-3">
+              {/* Uncontrolled fields are keyed on their server value so they refresh when a log/playbook changes it. */}
               <label className="block">
                 <span className="eyebrow">Stage</span>
                 <select
@@ -163,18 +225,18 @@ export function DealDrawer({
                 </label>
                 <label className="block">
                   <span className="eyebrow">Next action due</span>
-                  <input className={`${INPUT} mt-1`} type="date" defaultValue={d.nextActionDue?.slice(0, 10) ?? ""}
+                  <input key={`due-${d.nextActionDue}`} className={`${INPUT} mt-1`} type="date" defaultValue={d.nextActionDue?.slice(0, 10) ?? ""}
                     onChange={(e) => patch(`/api/deals/${d.id}`, { nextActionDue: e.target.value || null })} />
                 </label>
               </div>
               <label className="block">
                 <span className="eyebrow">Next action</span>
-                <input className={`${INPUT} mt-1`} defaultValue={d.nextAction ?? ""} placeholder="e.g. Send intro email"
+                <input key={`na-${d.nextAction}`} className={`${INPUT} mt-1`} defaultValue={d.nextAction ?? ""} placeholder="e.g. Send intro email"
                   onBlur={(e) => { if (e.target.value !== (d.nextAction ?? "")) patch(`/api/deals/${d.id}`, { nextAction: e.target.value }); }} />
               </label>
               <label className="block">
                 <span className="eyebrow">Notes</span>
-                <textarea className={`${INPUT} mt-1 min-h-[72px]`} defaultValue={d.notes ?? ""} placeholder="Anything Hermes should know (used in playbooks)"
+                <textarea key={`notes-${d.notes}`} className={`${INPUT} mt-1 min-h-[72px]`} defaultValue={d.notes ?? ""} placeholder="Anything Hermes should know (used in playbooks)"
                   onBlur={(e) => { if (e.target.value !== (d.notes ?? "")) patch(`/api/deals/${d.id}`, { notes: e.target.value }); }} />
               </label>
               {d.valueCents > 0 && <p className="text-[12px] text-[var(--text-3)]">{fmtMoney(d.valueCents)}{venture.recurring ? " / month" : ""}</p>}
@@ -226,9 +288,50 @@ export function DealDrawer({
             {detail.requests.length > 0 && (
               <section className="space-y-3">
                 <p className="eyebrow">Runs</p>
-                {detail.requests.map((r) => <RunCard key={r.id} run={r} />)}
+                {detail.requests.map((r) => (
+                  <RunCard
+                    key={r.id} run={r}
+                    handoff={{
+                      email: d.contact?.email ?? null, linkedinUrl: d.contact?.linkedinUrl ?? null, unsubscribed: !!d.contact?.unsubscribedAt,
+                      logged: detail.activities.some((a) => a.meta?.requestId === r.id),
+                      onLogSent: async (type, summary) => { await logActivity(type, summary, r.id); },
+                    }}
+                  />
+                ))}
               </section>
             )}
+
+            <section className="space-y-3">
+              <p className="eyebrow">Activity</p>
+              <form
+                className="flex flex-wrap gap-2"
+                onSubmit={async (e) => { e.preventDefault(); if (await logActivity(actType, actText)) setActText(""); }}
+              >
+                <select className={`${INPUT.replace("w-full", "w-[9.5rem]")} shrink-0`} value={actType} onChange={(e) => setActType(e.target.value)} aria-label="Activity type">
+                  {LOGGABLE_TYPES.map((t) => <option key={t} value={t}>{ACTIVITY_LABEL[t]}</option>)}
+                </select>
+                <input className={`${INPUT} flex-1 min-w-[10rem]`} value={actText} onChange={(e) => setActText(e.target.value)} placeholder="What happened? (optional)" aria-label="Activity note" />
+                <Button type="submit" size="sm">Log</Button>
+              </form>
+              {detail.activities.length === 0 ? (
+                <p className="text-[12.5px] text-[var(--text-3)]">Nothing logged yet. Logging an email you sent or a reply you got moves the deal and sets the next follow-up for you.</p>
+              ) : (
+                <ol className="space-y-2">
+                  {detail.activities.map((a) => (
+                    <li key={a.id} className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                      <span className="min-w-0">
+                        <span className="text-[var(--text-2)] font-medium">{ACTIVITY_LABEL[a.type] ?? a.type}</span>
+                        {(a.type === "stage" && a.meta?.to) ? <span className="text-[var(--text-3)]"> · {stageLabel(a.meta.from ?? "?")} → {stageLabel(a.meta.to)}</span>
+                          : a.summary ? <span className="text-[var(--text-3)]"> · {a.summary}</span> : null}
+                      </span>
+                      <time className="shrink-0 text-[var(--text-3)] num" dateTime={a.occurredAt}>
+                        {new Date(a.occurredAt).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}
+                      </time>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
 
             <div className="pt-2">
               <button

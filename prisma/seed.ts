@@ -62,6 +62,18 @@ const playbooks = [
       "Output the subject line (or 'Re:' if replying) and the body only. " + SIGNOFF + " Do NOT send anything.",
   },
   {
+    key: "draft-reply",
+    name: "Draft reply",
+    description: "Reply to something they wrote back. Paste their message.",
+    needsInput: true,
+    promptTemplate:
+      "Draft a reply to {{contact.name}} ({{contact.title}}) at {{company.name}}.\n" + CONTEXT +
+      "\nTheir reply, verbatim:\n\"\"\"\n{{input}}\n\"\"\"\n\n" + VOICE + "\n" +
+      "Answer what they actually asked. If they are interested, propose two specific 15-minute slots next week (leave the times " +
+      "as [TIME 1] / [TIME 2] for me to fill in). If they said no or asked to stop, thank them briefly and confirm you won't follow up. " +
+      "Under 100 words. Output the subject line ('Re: …') and the body only. " + SIGNOFF + " Do NOT send anything.",
+  },
+  {
     key: "prep-demo",
     name: "Prep demo",
     description: "One-page brief before a demo call. Internal only.",

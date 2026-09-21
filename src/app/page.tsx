@@ -8,6 +8,7 @@ import { EmptyState, Eyebrow, Panel, Pill, SectionHeader, Skeleton, rise } from 
 import { HermesBriefing } from "@/components/hermes-briefing";
 import { ApprovalInbox } from "@/components/approval-inbox";
 import { fmtMoney, stageLabel, type DueBucket, type VentureSummary } from "@/lib/crm";
+import type { Funnel } from "@/lib/outreach";
 
 interface TodayVenture {
   key: string;
@@ -17,6 +18,7 @@ interface TodayVenture {
   lostStage: string;
   recurring: boolean;
   summary: VentureSummary;
+  funnel: Funnel;
 }
 interface DueDeal {
   id: string;
@@ -30,6 +32,7 @@ interface DueDeal {
   bucket: DueBucket;
 }
 interface Today {
+  funnelDays: number;
   ventures: TodayVenture[];
   mrrCents: number;
   openPipelineCents: number;
@@ -44,17 +47,18 @@ const BUCKET_LABEL: Record<string, string> = { overdue: "Overdue", today: "Today
 export default function Home() {
   const [data, setData] = useState<Today | null>(null);
   const [error, setError] = useState(false);
+  const [days, setDays] = useState(7);
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch("/api/today");
+      const r = await fetch(`/api/today?days=${days}`);
       if (!r.ok) throw new Error(String(r.status));
       setData(await r.json());
       setError(false);
     } catch {
       setError(true);
     }
-  }, []);
+  }, [days]);
 
   useEffect(() => {
     load();
@@ -125,7 +129,16 @@ export default function Home() {
           </section>
 
           <section className="hq-rise" style={rise(6)}>
-            <SectionHeader label="Ventures" title="Pipeline by stage" action={<Link href="/pipeline" className="text-[12.5px] text-[var(--text-3)] hover:text-[var(--text)]">Open board →</Link>} />
+            <SectionHeader label="Ventures" title="Pipeline by stage" action={
+              <div className="flex items-center gap-4">
+                <div className="inline-flex rounded-md border border-white/10 p-0.5" role="group" aria-label="Funnel period">
+                  {[7, 30].map((n) => (
+                    <button key={n} onClick={() => setDays(n)} aria-pressed={days === n}
+                      className={`px-2.5 py-1 text-[12px] rounded ${days === n ? "bg-white/10 text-[var(--text)]" : "text-[var(--text-3)] hover:text-[var(--text-2)]"}`}>{n}d</button>
+                  ))}
+                </div>
+                <Link href="/pipeline" className="text-[12.5px] text-[var(--text-3)] hover:text-[var(--text)]">Open board →</Link>
+              </div>} />
             {!loaded ? (
               <Skeleton className="h-32" />
             ) : data.ventures.length === 0 ? (
@@ -147,6 +160,23 @@ export default function Home() {
                           <div className="eyebrow truncate" title={stageLabel(s)}>{stageLabel(s)}</div>
                         </div>
                       ))}
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-white/[0.06]">
+                      <div className="eyebrow mb-2">Last {data.funnelDays} days</div>
+                      <dl className="flex flex-wrap gap-x-7 gap-y-2">
+                        {[
+                          { k: "Sent", v: v.funnel.sent },
+                          { k: "Replies", v: v.funnel.replies, sub: v.funnel.replyRate != null ? `${Math.round(v.funnel.replyRate * 100)}%` : null },
+                          ...[...v.stages.slice(3), v.wonStage].map((s) => ({ k: stageLabel(s), v: v.funnel.entries[s] ?? 0, sub: null as string | null })),
+                        ].map((m) => (
+                          <div key={m.k}>
+                            <dd className="text-[18px] font-semibold num text-[var(--text)] leading-none">
+                              {m.v}{m.sub ? <span className="ml-1 text-[12px] font-normal text-[var(--text-3)]">{m.sub}</span> : null}
+                            </dd>
+                            <dt className="mt-1 text-[11.5px] text-[var(--text-3)]">{m.k}</dt>
+                          </div>
+                        ))}
+                      </dl>
                     </div>
                   </Panel>
                 ))}
