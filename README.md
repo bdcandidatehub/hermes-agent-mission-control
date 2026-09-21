@@ -137,6 +137,40 @@ access to Postgres and your local `hermes` CLI. See
 
 ---
 
+## Run it locally (Postgres in Docker, Hermes in Docker)
+
+The simplest setup on one Mac: Postgres in a container, the web app and the bridge running directly on the host.
+Nothing is exposed beyond `127.0.0.1`.
+
+```sh
+npm ci
+cp .env.example .env        # then set DATABASE_URL, HERMES_BIN and HERMES_WIKI as below
+npm run db:up               # Postgres on 127.0.0.1:54330 (named volume, survives restarts)
+npx prisma db push && npm run db:seed
+npm run dev                 # http://127.0.0.1:3000 (next free port if 3000 is taken), no login, this Mac only
+npm run bridge              # in a second terminal
+```
+
+`.env` for this setup:
+
+```sh
+DATABASE_URL="postgresql://hermy:hermy_local@127.0.0.1:54330/hermy"
+HERMES_BIN="/absolute/path/to/hermy-hq/hermes-bridge/hermes-docker.sh"   # runs `docker exec hermes hermes ...`
+HERMES_WIKI="/path/to/the/bind-mounted/wiki"                            # the folder on the host, not the one inside the container
+```
+
+- **Hermes in Docker:** the bridge shells out to the `hermes` CLI. `hermes-bridge/hermes-docker.sh` forwards each call
+  with `docker exec` (set `HERMES_CONTAINER` if your container isn't named `hermes`).
+- **Wiki:** your wiki must be reachable from the host, e.g. a bind-mounted data folder. Dashboard edits keep a note's existing
+  frontmatter, and the previous version of every edited note is saved to `<wiki>/.hermy-backups/`.
+  `Logs/` and `index.md` aren't mirrored (`HERMES_WIKI_SKIP`). Set `HERMES_WIKI_GIT=1` to commit each dashboard edit.
+- **The dev server skips login.** That's why `npm run dev` listens on `127.0.0.1` only. To expose it anywhere else, use the
+  production build (`npm run build && npm start`) with Google login instead.
+- **The daily brief** is generated once per local day after `BRIEF_HOUR`, by the bridge (a real Hermes run). Restarting the bridge
+  won't regenerate it.
+
+---
+
 ## Quick start
 
 ### Prerequisites

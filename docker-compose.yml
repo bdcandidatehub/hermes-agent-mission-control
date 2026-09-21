@@ -1,0 +1,24 @@
+# Local Postgres for Hermy HQ.  Start it with:  npm run db:up
+# Bound to 127.0.0.1 only, so nothing else on your network can reach it. Data lives in the named volume
+# "hermy_pgdata" and survives restarts and `docker compose down` (only `down -v` deletes it).
+services:
+  postgres:
+    image: postgres:16
+    container_name: hermy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hermy
+      POSTGRES_PASSWORD: hermy_local # local-only; the port is not exposed beyond 127.0.0.1
+      POSTGRES_DB: hermy
+    ports:
+      - "127.0.0.1:54330:5432"
+    volumes:
+      - hermy_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermy -d hermy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  hermy_pgdata:

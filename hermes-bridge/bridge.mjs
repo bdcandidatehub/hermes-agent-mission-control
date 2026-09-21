@@ -23,7 +23,9 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { writeWikiEntry as writeWiki } from "./wiki.mjs";
+import { parseStatus } from "./status.mjs";
+import { shouldGenerateBrief } from "./brief.mjs";
+import { deriveTitle, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
 
 const execFileP = promisify(execFile);
 const HERMES = process.env.HERMES_BIN || "hermes";
@@ -32,6 +34,12 @@ const POLL_MS = Number(process.env.BRIDGE_POLL_MS || 5000);
 const MIRROR_MS = Number(process.env.BRIDGE_MIRROR_MS || 30000);
 const RUN_TIMEOUT_MS = Number(process.env.BRIDGE_RUN_TIMEOUT_MS || 240000);
 const WIKI_DIR = process.env.HERMES_WIKI || path.join(os.homedir(), ".hermes", "wiki");
+// Names (case-insensitive) that are NOT mirrored as wiki entries: folders like Logs, or files like index.md.
+const WIKI_SKIP = (process.env.HERMES_WIKI_SKIP ?? "Logs,index.md,INDEX.md").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+const SKIP = { dirs: new Set(WIKI_SKIP.filter((x) => !x.endsWith(".md"))), files: new Set(WIKI_SKIP.filter((x) => x.endsWith(".md"))) };
+// Dashboard edits only touch the file (a backup of the old version goes to .hermy-backups/).
+// Set HERMES_WIKI_GIT=1 to also `git init` (if needed) and commit each dashboard edit.
+const WIKI_GIT = process.env.HERMES_WIKI_GIT === "1";
 const BRIEF_HOUR = Number(process.env.BRIEF_HOUR || 8);   // local hour to auto-generate the daily brief
 const BRIEF_PROMPT =
   "You are the operator's chief of staff. Produce today's brief. Read your memory wiki open-loops " +
@@ -40,7 +48,8 @@ const BRIEF_PROMPT =
   '"sections":[{"label":"Needs your decision","items":["..."]},{"label":"Top priorities","items":["..."]},' +
   '{"label":"Recently shipped","items":["..."]},{"label":"Next actions","items":["..."]}]}. ' +
   "Keep every item short, concrete, and specific. Omit a section if it has nothing.";
-let lastBriefDate = null;
+let briefInFlight = false;
+let lastBriefAttemptMs = null;
 
 const DB_URL = process.env.DATABASE_URL || "";
 if (!DB_URL) { console.error("DATABASE_URL is required (use the direct postgres:// URL, not a prisma:// Accelerate URL)"); process.exit(1); }
@@ -158,58 +167,35 @@ async function mirrorHealth() {
   try {
     const out = await hermes(["status"], { timeout: 12000 });
     detail = out.slice(0, 4000);
-    online = /online|running|connected/i.test(out);
-    gateway = /gateway[^\n]*(running|online)/i.test(out) ? "running" : "stopped";
+    ({ online, gateway } = parseStatus(out));
   } catch (e) { detail = e.message.split("\n")[0]; }
   await setStore("hermes-health", { online, gateway, detail, lastSeen: new Date().toISOString() });
 }
 
 /* ─────────────── Memory Wiki (warm tier: git-tracked markdown) ─────────────── */
-function parseEntry(md) {
-  const m = md.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  const fm = {}; let body = md;
-  if (m) {
-    body = m[2];
-    for (const line of m[1].split("\n")) {
-      const kv = line.match(/^([A-Za-z_]+):\s*(.*)$/);
-      if (!kv) continue;
-      const v = kv[2].trim();
-      if (v.startsWith("[") && v.endsWith("]")) fm[kv[1]] = v.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
-      else fm[kv[1]] = v === "null" || v === "" ? null : v;
-    }
-  }
-  return { fm, body: body.trim() };
-}
-function walkMd(dir, out = []) {
-  let items = [];
-  try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
-  for (const it of items) {
-    const full = path.join(dir, it.name);
-    if (it.isDirectory()) { if (it.name !== ".git") walkMd(full, out); }
-    else if (it.name.endsWith(".md") && it.name !== "INDEX.md") out.push(full);
-  }
-  return out;
-}
 async function mirrorWiki() {
   if (!fs.existsSync(WIKI_DIR)) return;
   const seen = new Set();
-  for (const file of walkMd(WIKI_DIR)) {
+  for (const file of walkMd(WIKI_DIR, SKIP)) {
     const rel = path.relative(WIKI_DIR, file);
     const id = rel.replace(/\.md$/, "");
     seen.add(id);
     let raw = ""; try { raw = fs.readFileSync(file, "utf8"); } catch { continue; }
     const { fm, body } = parseEntry(raw);
-    await q(
-      `INSERT INTO "HermesMemory" (id, path, type, title, status, confidence, provenance, tags, links, body, "validFrom", "validTo", "updatedAt", "syncedAt")
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), now())
-       ON CONFLICT (id) DO UPDATE SET path=EXCLUDED.path, type=EXCLUDED.type, title=EXCLUDED.title,
-         status=EXCLUDED.status, confidence=EXCLUDED.confidence, provenance=EXCLUDED.provenance,
-         tags=EXCLUDED.tags, links=EXCLUDED.links, body=EXCLUDED.body,
-         "validFrom"=EXCLUDED."validFrom", "validTo"=EXCLUDED."validTo", "syncedAt"=now()`,
-      [id, rel, fm.type || "fact", fm.title || id, fm.status || "active", fm.confidence || null,
-       fm.provenance || null, Array.isArray(fm.tags) ? fm.tags : [], Array.isArray(fm.links) ? fm.links : [],
-       body, fm.valid_from || null, fm.valid_to || null]
-    );
+    const sc = (v) => (Array.isArray(v) ? v.join(", ") : v ?? null); // scalar columns: flatten list-valued keys
+    try {
+      await q(
+        `INSERT INTO "HermesMemory" (id, path, type, title, status, confidence, provenance, tags, links, body, "validFrom", "validTo", "updatedAt", "syncedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), now())
+         ON CONFLICT (id) DO UPDATE SET path=EXCLUDED.path, type=EXCLUDED.type, title=EXCLUDED.title,
+           status=EXCLUDED.status, confidence=EXCLUDED.confidence, provenance=EXCLUDED.provenance,
+           tags=EXCLUDED.tags, links=EXCLUDED.links, body=EXCLUDED.body,
+           "validFrom"=EXCLUDED."validFrom", "validTo"=EXCLUDED."validTo", "syncedAt"=now()`,
+        [id, rel, sc(fm.type) || "fact", sc(fm.title) || deriveTitle(rel, body) || id, sc(fm.status) || "active", sc(fm.confidence),
+         sc(fm.provenance), Array.isArray(fm.tags) ? fm.tags : [], Array.isArray(fm.links) ? fm.links : [],
+         body, fm.valid_from || null, fm.valid_to || null]
+      );
+    } catch (e) { log("wiki entry skipped (previous copy kept):", rel, e.message.split("\n")[0]); }
   }
   if (seen.size) await q(`DELETE FROM "HermesMemory" WHERE id <> ALL($1::text[])`, [[...seen]]);
   else await q(`DELETE FROM "HermesMemory"`);
@@ -236,12 +222,15 @@ async function generateBriefing() {
   await emit("status", "Daily brief generated", { level: "up" });
 }
 async function maybeDailyBrief() {
+  const { rows } = await q(`SELECT data FROM "DataStore" WHERE key='hermes-briefing'`);
+  const lastGeneratedAt = rows[0]?.data?.generatedAt ?? null;
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  if (now.getHours() >= BRIEF_HOUR && lastBriefDate !== today) {
-    lastBriefDate = today;
-    try { await generateBriefing(); } catch (e) { log("daily brief err", e.message); }
-  }
+  if (!shouldGenerateBrief({ now, briefHour: BRIEF_HOUR, lastGeneratedAt, lastAttemptMs: lastBriefAttemptMs, inFlight: briefInFlight })) return;
+  briefInFlight = true;
+  lastBriefAttemptMs = now.getTime();
+  try { await generateBriefing(); log("daily brief generated"); }
+  catch (e) { log("daily brief failed (will retry in 30 min):", e.message.split("\n")[0]); }
+  finally { briefInFlight = false; }
 }
 
 /* ─────────────── PUSH: run website requests via Hermes ─────────────── */
@@ -268,12 +257,11 @@ async function runRequest(r) {
     } else if (r.kind === "memory.write") {
       const e = JSON.parse(r.prompt || "{}");
       const rel = writeWiki(WIKI_DIR, e);
-      await gitCommitWiki(`wiki: update ${rel} (via dashboard)`);
+      if (WIKI_GIT) await gitCommitWiki(`wiki: update ${rel} (via dashboard)`);
       await mirrorWiki();
       result = `wrote ${rel}`;
     } else if (r.kind === "briefing.generate") {
       await generateBriefing();
-      lastBriefDate = new Date().toISOString().slice(0, 10);
       result = "brief updated";
     } else {
       throw new Error(`unknown kind ${r.kind}`);
@@ -317,16 +305,18 @@ async function mirrorTick() {
   try { await mirrorHealth(); } catch (e) { log("mirrorHealth err", e.message); }
   try { await mirrorWiki(); } catch (e) { log("mirrorWiki err", e.message); }
   try { await mirrorCost(); } catch (e) { log("mirrorCost err", e.message); }
-  try { await maybeDailyBrief(); } catch (e) { log("maybeDailyBrief err", e.message); }
 }
 
 async function main() {
   log(`hermes-bridge up · board=${BOARD} · poll=${POLL_MS}ms · mirror=${MIRROR_MS}ms`);
   await emit("status", "Bridge connected", { level: "up" });
-  await mirrorTick();
-  setInterval(() => mirrorTick().catch((e) => log("mirror loop", e.message)), MIRROR_MS);
-  // queue loop
-  const tick = async () => { try { await processQueue(); } catch (e) { log("queue loop", e.message); } finally { setTimeout(tick, POLL_MS); } };
-  tick();
+  // Three independent, non-overlapping loops: a slow mirror pass or a 4-minute brief must never delay the request queue.
+  const loop = (name, ms, fn) => {
+    const run = async () => { try { await fn(); } catch (e) { log(`${name} error:`, e.message); } finally { setTimeout(run, ms); } };
+    run();
+  };
+  loop("queue", POLL_MS, processQueue);
+  loop("mirror", MIRROR_MS, mirrorTick);
+  loop("brief", 60_000, maybeDailyBrief);
 }
 main().catch((e) => { console.error("fatal", e); process.exit(1); });
