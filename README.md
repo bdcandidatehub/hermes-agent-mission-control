@@ -74,7 +74,9 @@ environment variables.
 - Chief-of-Staff daily brief, generated on a schedule
 
 **Memory**
-- Memory Wiki: browse and edit the agent's memory (facts, notes, links) as a wiki
+- Memory Wiki: browse and search the agent's memory as a wiki. If it lives in an **Obsidian vault**, it understands `[[wikilinks]]`
+  (clickable, with backlinks), shows each note's sources, and has an **Open in Obsidian** button. It can edit notes in place, or,
+  for a vault with its own ingest pipeline, capture new material as raw sources instead (see below)
 
 > The template ships with one seeded venture, **CandidateHub** (edit `prisma/seed.ts`
 > to match your own offer, voice and stages). No third-party API keys are required.
@@ -164,6 +166,13 @@ HERMES_WIKI="/path/to/the/bind-mounted/wiki"                            # the fo
 - **Wiki:** your wiki must be reachable from the host, e.g. a bind-mounted data folder. Dashboard edits keep a note's existing
   frontmatter, and the previous version of every edited note is saved to `<wiki>/.hermy-backups/`.
   `Logs/` and `index.md` aren't mirrored (`HERMES_WIKI_SKIP`). Set `HERMES_WIKI_GIT=1` to commit each dashboard edit.
+- **Obsidian vault:** if `HERMES_WIKI` is inside a vault (a folder containing `.obsidian`), the dashboard detects it and
+  builds `obsidian://` links. Edits made in Obsidian show up here within ~30s. `HERMES_WIKI_MODE` controls what the dashboard may write:
+  - `edit` (default): edit notes in place; existing frontmatter is merged and the old version is backed up.
+  - `capture`: compiled notes are read-only. **Add source** saves a new note to `HERMES_RAW_DIR` (default `<vault>/Raw/Sources`,
+    in the vault's own source format, never overwriting anything) for your ingest to compile. Use this for vaults with a schema.
+  - `readonly`: the dashboard never writes to the vault.
+  Don't enable `HERMES_WIKI_GIT` for a vault that already has uncommitted work.
 - **The dev server skips login.** That's why `npm run dev` listens on `127.0.0.1` only. To expose it anywhere else, use the
   production build (`npm run build && npm start`) with Google login instead.
 - **The daily brief** is generated once per local day after `BRIEF_HOUR`, by the bridge (a real Hermes run). Restarting the bridge

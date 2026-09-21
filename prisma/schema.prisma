@@ -206,6 +206,7 @@ model HermesMemory {
   body       String    @default("")
   validFrom  DateTime?
   validTo    DateTime?
+  sources    String[]  @default([])   // raw source notes this note cites (vault notes)
   updatedAt  DateTime  @default(now())
   syncedAt   DateTime  @updatedAt
 

@@ -18,7 +18,11 @@ import {
   Link2,
   ShieldCheck,
   CalendarClock,
+  ExternalLink,
+  FileText,
+  Loader2,
 } from "lucide-react";
+import { DEFAULT_WIKI_CONFIG, wikiNoteUrl, wikiSourceUrl, type WikiConfig } from "@/lib/wiki-links";
 import {
   Panel,
   Button,
@@ -39,18 +43,22 @@ type MemType =
   | "lesson"
   | "metric"
   | "note";
-type MemStatus = "active" | "superseded" | "archived";
+// Vault notes bring their own vocabulary (seed / growing / mature / archived; concept / entity / topic ...).
+type MemStatus = string;
 
 interface Entry {
   id: string;
   path: string;
-  type: MemType;
+  type: string;
   title: string;
   status: MemStatus;
   confidence: number | null;
   provenance: string | null;
   tags: string[];
   links: string[];
+  sources: string[];
+  resolvedLinks: { target: string; id: string | null; title: string | null }[];
+  backlinks: { id: string; title: string }[];
   body: string;
   validFrom: string | null;
   validTo: string | null;
@@ -63,6 +71,7 @@ interface MemoryResponse {
   typeCounts: Record<string, number>;
   total: number;
   lastSync: string | null;
+  config: WikiConfig;
 }
 
 const TYPES: MemType[] = [
@@ -79,9 +88,15 @@ const TYPES: MemType[] = [
 
 type Tone = "neutral" | "up" | "down" | "warn" | "accent";
 function typeTone(t: string): Tone {
-  if (t === "decision") return "accent";
-  if (t === "lesson") return "warn";
-  if (t === "project") return "up";
+  if (t === "decision" || t === "concept") return "accent";
+  if (t === "lesson" || t === "log") return "warn";
+  if (t === "project" || t === "entity") return "up";
+  return "neutral";
+}
+function statusTone(s: string): Tone {
+  if (s === "mature") return "up";
+  if (s === "growing") return "accent";
+  if (s === "archived" || s === "superseded") return "warn";
   return "neutral";
 }
 
@@ -151,8 +166,8 @@ function ConfidenceDot({ value }: { value: number }) {
 // ── Tiny, safe markdown renderer (builds React elements) ──
 // Handles: # / ## headings, - / * bullets, - [ ] / - [x] checkboxes,
 // blank-line spacing, paragraphs, and inline `code`.
-function renderInline(text: string, keyBase: string): React.ReactNode[] {
-  const parts = text.split(/(`[^`]+`)/g);
+function renderInline(text: string, keyBase: string, wl?: WikiLinkCtx): React.ReactNode[] {
+  const parts = text.split(/(`[^`]+`|\[\[[^\]\n]+\]\])/g);
   return parts.map((p, i) => {
     if (p.startsWith("`") && p.endsWith("`") && p.length > 1) {
       return (
@@ -164,11 +179,30 @@ function renderInline(text: string, keyBase: string): React.ReactNode[] {
         </code>
       );
     }
+    if (p.startsWith("[[") && p.endsWith("]]")) {
+      // Obsidian [[Target|alias#heading]]: show the alias (or target); link to the note if we can resolve it
+      const inner = p.slice(2, -2);
+      const target = inner.split("|")[0].split("#")[0].split("^")[0].trim();
+      const label = (inner.includes("|") ? inner.split("|").slice(1).join("|") : inner).trim();
+      const hit = wl?.resolve(target);
+      return hit ? (
+        <button
+          key={`${keyBase}-w${i}`} type="button" onClick={() => wl?.open(hit)}
+          className="text-[var(--accent)] hover:underline underline-offset-2"
+        >
+          {label}
+        </button>
+      ) : (
+        <span key={`${keyBase}-w${i}`} className="text-[var(--text-3)]" title="No matching note">{label}</span>
+      );
+    }
     return <Fragment key={`${keyBase}-t${i}`}>{p}</Fragment>;
   });
 }
 
-function Markdown({ body }: { body: string }) {
+interface WikiLinkCtx { resolve: (target: string) => string | null; open: (id: string) => void }
+
+function Markdown({ body, wl }: { body: string; wl?: WikiLinkCtx }) {
   const lines = (body || "").replace(/\r\n/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
   let bullets: { text: string; check: boolean | null }[] = [];
@@ -203,7 +237,7 @@ function Markdown({ body }: { body: string }) {
               </span>
             )}
             <span className={it.check ? "opacity-70" : ""}>
-              {renderInline(it.text, `li-${key}-${i}`)}
+              {renderInline(it.text, `li-${key}-${i}`, wl)}
             </span>
           </li>
         ))}
@@ -226,13 +260,19 @@ function Markdown({ body }: { body: string }) {
     }
     flushBullets();
 
-    if (line.startsWith("## ")) {
+    if (line.startsWith("### ")) {
+      blocks.push(
+        <h5 key={`h-${key++}`} className="mt-2 mb-0.5 text-[12.5px] font-semibold text-[var(--text-2)]">
+          {renderInline(line.slice(4), `h3-${key}`, wl)}
+        </h5>
+      );
+    } else if (line.startsWith("## ")) {
       blocks.push(
         <h4
           key={`h-${key++}`}
           className="mt-3 mb-1 text-[13px] font-semibold tracking-[-0.01em] text-[var(--text)]"
         >
-          {renderInline(line.slice(3), `h2-${key}`)}
+          {renderInline(line.slice(3), `h2-${key}`, wl)}
         </h4>
       );
     } else if (line.startsWith("# ")) {
@@ -241,7 +281,7 @@ function Markdown({ body }: { body: string }) {
           key={`h-${key++}`}
           className="mt-3 mb-1 text-[15px] font-semibold tracking-[-0.015em] text-[var(--text)]"
         >
-          {renderInline(line.slice(2), `h1-${key}`)}
+          {renderInline(line.slice(2), `h1-${key}`, wl)}
         </h3>
       );
     } else if (line.trim() === "") {
@@ -252,7 +292,7 @@ function Markdown({ body }: { body: string }) {
           key={`p-${key++}`}
           className="text-[13.5px] leading-relaxed text-[var(--text-2)]"
         >
-          {renderInline(line, `p-${key}`)}
+          {renderInline(line, `p-${key}`, wl)}
         </p>
       );
     }
@@ -273,13 +313,23 @@ function EntryCard({
   expanded,
   onToggle,
   onEdit,
+  config,
+  onOpenNote,
 }: {
   entry: Entry;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  config: WikiConfig;
+  onOpenNote: (id: string) => void;
 }) {
+  const obsidian = wikiNoteUrl(config, entry.path);
+  const wl: WikiLinkCtx = {
+    resolve: (t) => entry.resolvedLinks.find((l) => l.target.toLowerCase() === t.toLowerCase())?.id ?? null,
+    open: onOpenNote,
+  };
   return (
+    <div data-note-id={entry.id}>
     <Panel className="p-0 overflow-hidden">
       <button
         type="button"
@@ -291,7 +341,7 @@ function EntryCard({
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
             <Pill tone={typeTone(entry.type)}>{entry.type}</Pill>
             {entry.status !== "active" && (
-              <Pill tone="neutral">{entry.status}</Pill>
+              <Pill tone={statusTone(entry.status)}>{entry.status}</Pill>
             )}
             {entry.confidence != null && (
               <ConfidenceDot value={entry.confidence} />
@@ -328,7 +378,7 @@ function EntryCard({
       {expanded && (
         <div className="px-5 pb-5 pt-1">
           <div className="rule mb-4" />
-          <Markdown body={entry.body} />
+          <Markdown body={entry.body} wl={wl} />
 
           {/* Metadata */}
           <div className="mt-5 flex flex-col gap-2.5">
@@ -351,18 +401,57 @@ function EntryCard({
                 </span>
               </div>
             )}
-            {entry.links.length > 0 && (
+            {entry.resolvedLinks.length > 0 && (
               <div className="flex items-start gap-2 text-[11.5px] text-[var(--text-3)]">
                 <Link2 className="w-3.5 h-3.5 shrink-0 mt-1" />
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  {entry.links.map((l) => (
-                    <span
-                      key={l}
-                      className="num text-[10.5px] text-[var(--text-2)] rounded-full px-2 py-0.5 bg-[var(--surface-2)] border border-[var(--line)]"
+                  {entry.resolvedLinks.map((l) =>
+                    l.id ? (
+                      <button
+                        key={l.target} type="button" onClick={() => onOpenNote(l.id!)}
+                        className="text-[10.5px] text-[var(--accent)] rounded-full px-2 py-0.5 bg-[var(--surface-2)] border border-[var(--line)] hover:underline"
+                      >
+                        {l.title ?? l.target}
+                      </button>
+                    ) : (
+                      <span key={l.target} title="No matching note" className="num text-[10.5px] text-[var(--text-3)] rounded-full px-2 py-0.5 border border-dashed border-[var(--line)]">
+                        {l.target}
+                      </span>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+            {entry.backlinks.length > 0 && (
+              <div className="flex items-start gap-2 text-[11.5px] text-[var(--text-3)]">
+                <span className="shrink-0 mt-0.5">← linked from</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {entry.backlinks.map((b) => (
+                    <button
+                      key={b.id} type="button" onClick={() => onOpenNote(b.id)}
+                      className="text-[10.5px] text-[var(--text-2)] rounded-full px-2 py-0.5 bg-[var(--surface-2)] border border-[var(--line)] hover:underline"
                     >
-                      {l}
-                    </span>
+                      {b.title}
+                    </button>
                   ))}
+                </div>
+              </div>
+            )}
+            {entry.sources.length > 0 && (
+              <div className="flex items-start gap-2 text-[11.5px] text-[var(--text-3)]">
+                <FileText className="w-3.5 h-3.5 shrink-0 mt-1" />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {entry.sources.map((src) => {
+                    const href = wikiSourceUrl(config, src);
+                    const label = src.replace(/\.md$/i, "");
+                    return href ? (
+                      <a key={src} href={href} title="Open source in Obsidian" className="text-[10.5px] text-[var(--text-2)] rounded-full px-2 py-0.5 bg-[var(--surface-2)] border border-[var(--line)] hover:underline">
+                        {label}
+                      </a>
+                    ) : (
+                      <span key={src} className="text-[10.5px] text-[var(--text-2)] rounded-full px-2 py-0.5 bg-[var(--surface-2)] border border-[var(--line)]">{label}</span>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -371,15 +460,24 @@ function EntryCard({
             </div>
           </div>
 
-          <div className="mt-5">
-            <Button variant="ghost" size="sm" onClick={onEdit}>
-              <Pencil className="w-3.5 h-3.5" />
-              Edit
-            </Button>
+          <div className="mt-5 flex items-center gap-2 flex-wrap">
+            {obsidian && (
+              <Button variant="ghost" size="sm" href={obsidian}>
+                <ExternalLink className="w-3.5 h-3.5" />
+                Open in Obsidian
+              </Button>
+            )}
+            {config.mode === "edit" && (
+              <Button variant="ghost" size="sm" onClick={onEdit}>
+                <Pencil className="w-3.5 h-3.5" />
+                Edit
+              </Button>
+            )}
           </div>
         </div>
       )}
     </Panel>
+    </div>
   );
 }
 
@@ -388,7 +486,7 @@ interface Draft {
   id?: string;
   path?: string;
   title: string;
-  type: MemType;
+  type: string;
   tags: string;
   status: MemStatus;
   confidence: string;
@@ -620,6 +718,70 @@ function EntryEditor({
 }
 
 // ── Main ──────────────────────────────────────────────────
+// ── Add source (capture into the vault's Raw sources; your own ingest compiles it) ──
+function SourceForm({ onClose }: { onClose: () => void }) {
+  const [f, setF] = useState({ title: "", reference: "", author: "", body: "" });
+  const [phase, setPhase] = useState<"idle" | "saving" | "waiting" | "done" | "failed">("idle");
+  const [msg, setMsg] = useState<string | null>(null);
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value });
+  const inputCls =
+    "w-full bg-transparent text-[14px] text-[var(--text)] placeholder:text-[var(--text-3)] px-3.5 py-2.5 rounded-[10px] border border-[var(--line)] outline-none focus:border-[color-mix(in_srgb,var(--accent)_45%,transparent)] transition-colors";
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!f.title.trim() || phase === "saving" || phase === "waiting") return;
+    setPhase("saving"); setMsg(null);
+    try {
+      const r = await fetch("/api/hermes/sources", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setPhase("failed"); setMsg(j.error ?? "Couldn't save that."); return; }
+      setPhase("waiting");
+      // the bridge writes the file; wait (up to ~30s) for it to report back
+      for (let i = 0; i < 20; i++) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const list = await getJSON<{ requests: { id: string; status: string; result: string | null; error: string | null }[] }>("/api/hermes/requests?take=30");
+        const mine = list?.requests.find((x) => x.id === j.request.id);
+        if (mine?.status === "done") { setPhase("done"); setMsg(mine.result); return; }
+        if (mine?.status === "failed") { setPhase("failed"); setMsg(mine.error ?? "The bridge couldn't save it."); return; }
+      }
+      setPhase("failed"); setMsg("Still waiting on the bridge. Is it running? The source will be saved when it is.");
+    } catch { setPhase("failed"); setMsg("Couldn't reach the server."); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Add source">
+      <button aria-label="Close" className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <form onSubmit={submit} className="relative w-full max-w-[480px] h-full overflow-y-auto bg-[var(--bg)] border-l border-[var(--line)] p-6 space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Eyebrow>Capture</Eyebrow>
+            <h2 className="mt-1 text-[20px] font-semibold tracking-[-0.015em] text-[var(--text)]">Add a source</h2>
+            <p className="mt-2 text-[12.5px] text-[var(--text-3)] leading-relaxed">
+              Saved as a new note in your vault&apos;s sources folder. Your own ingest compiles it into the wiki. Existing notes are never changed.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 text-[var(--text-3)] hover:text-[var(--text)]" aria-label="Close"><X className="w-4 h-4" /></button>
+        </div>
+        <label className="block"><span className="eyebrow block !mb-2">Title *</span><input required autoFocus className={inputCls} value={f.title} onChange={set("title")} placeholder="Q3 pricing call notes" /></label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block"><span className="eyebrow block !mb-2">Reference</span><input className={inputCls} value={f.reference} onChange={set("reference")} placeholder="call, URL, doc…" /></label>
+          <label className="block"><span className="eyebrow block !mb-2">Author</span><input className={inputCls} value={f.author} onChange={set("author")} placeholder="who said it" /></label>
+        </div>
+        <label className="block"><span className="eyebrow block !mb-2">Content</span><textarea className={`${inputCls} min-h-[220px]`} value={f.body} onChange={set("body")} placeholder="Paste the raw material. Markdown is fine." /></label>
+        {msg && <p className={`text-[13px] ${phase === "failed" ? "text-[var(--down)]" : "text-[var(--up)]"}`} role={phase === "failed" ? "alert" : "status"}>{msg}</p>}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>{phase === "done" ? "Close" : "Cancel"}</Button>
+          {phase !== "done" && (
+            <Button type="submit" variant="primary" disabled={!f.title.trim() || phase === "saving" || phase === "waiting"}>
+              {phase === "saving" || phase === "waiting" ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Saving…</> : "Save source"}
+            </Button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function MemoryWikiPage() {
   const [q, setQ] = useState("");
   const [qInput, setQInput] = useState("");
@@ -631,6 +793,8 @@ export default function MemoryWikiPage() {
   const [total, setTotal] = useState(0);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [config, setConfig] = useState<WikiConfig>(DEFAULT_WIKI_CONFIG);
+  const [addingSource, setAddingSource] = useState(false);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ draft: Draft; isNew: boolean } | null>(
@@ -656,6 +820,7 @@ export default function MemoryWikiPage() {
       setTypeCounts(data.typeCounts ?? {});
       setTotal(data.total ?? 0);
       setLastSync(data.lastSync ?? null);
+      if (data.config) setConfig(data.config);
     }
     setLoaded(true);
   }, [q, typeFilter, statusAll]);
@@ -668,16 +833,24 @@ export default function MemoryWikiPage() {
   }, [load]);
 
   const chips = useMemo(() => {
-    return TYPES.filter((t) => (typeCounts[t] ?? 0) > 0).map((t) => ({
-      type: t,
-      count: typeCounts[t] ?? 0,
-    }));
+    // whatever kinds the wiki actually has (concept/entity/topic in a vault; fact/decision/... otherwise)
+    return Object.entries(typeCounts)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ type, count }));
   }, [typeCounts]);
 
   const openNew = () =>
     setEditor({ draft: emptyDraft(), isNew: true });
   const openEdit = (e: Entry) =>
     setEditor({ draft: draftFrom(e), isNew: false });
+
+  // Jump to another note (from a [[wikilink]], a link chip or a backlink). If filters hide it, show everything.
+  const openNote = (id: string) => {
+    if (!entries.some((e) => e.id === id)) { setQInput(""); setQ(""); setTypeFilter("all"); setStatusAll(true); }
+    setExpandedId(id);
+    setTimeout(() => document.querySelector(`[data-note-id="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+  };
 
   return (
     <>
@@ -695,13 +868,22 @@ export default function MemoryWikiPage() {
             </p>
             <p className="num text-[11.5px] text-[var(--text-3)] mt-3">
               synced {timeAgo(lastSync)}
+              {config.vault && <> · vault <span className="text-[var(--text-2)]">{config.vault.name}</span></>}
+              {config.mode !== "edit" && " · notes are read-only here (open them in Obsidian to edit)"}
             </p>
           </div>
           <div className="shrink-0">
-            <Button variant="primary" onClick={openNew}>
-              <Plus className="w-3.5 h-3.5" />
-              New entry
-            </Button>
+            {config.mode === "edit" ? (
+              <Button variant="primary" onClick={openNew}>
+                <Plus className="w-3.5 h-3.5" />
+                New entry
+              </Button>
+            ) : config.canCapture ? (
+              <Button variant="primary" onClick={() => setAddingSource(true)}>
+                <Plus className="w-3.5 h-3.5" />
+                Add source
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -728,7 +910,7 @@ export default function MemoryWikiPage() {
                     : "text-[var(--text-3)] hover:text-[var(--text-2)]"
                 }`}
               >
-                Active
+                Current
               </button>
               <button
                 type="button"
@@ -816,12 +998,15 @@ export default function MemoryWikiPage() {
                   setExpandedId((cur) => (cur === e.id ? null : e.id))
                 }
                 onEdit={() => openEdit(e)}
+                config={config}
+                onOpenNote={openNote}
               />
             ))
           )}
         </div>
       </div>
 
+      {addingSource && <SourceForm onClose={() => { setAddingSource(false); load(); }} />}
       {editor && (
         <EntryEditor
           draft={editor.draft}

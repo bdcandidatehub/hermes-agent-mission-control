@@ -59,6 +59,20 @@ export function parseEntry(md) {
   return { fm, body: m[2].trim() };
 }
 
+// Obsidian [[wikilinks]] in a note body → unique link targets. Strips |alias, #heading and ^block parts;
+// ignores ![[embeds]] and anything inside code.
+/** @param {string} body @returns {string[]} */
+export function extractWikilinks(body) {
+  const text = String(body ?? "").replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
+  const out = [];
+  for (const m of text.matchAll(/(!?)\[\[([^\]\n]+?)\]\]/g)) {
+    if (m[1] === "!") continue;
+    const target = m[2].split("|")[0].split("#")[0].split("^")[0].trim();
+    if (target && !out.includes(target)) out.push(target);
+  }
+  return out;
+}
+
 /* ───────────── listing ───────────── */
 
 // skip = { dirs: Set<lowercase name>, files: Set<lowercase name> }. Dot-directories are always skipped.
@@ -160,11 +174,14 @@ export function writeWikiEntry(wikiDir, e) {
   const existing = fs.existsSync(full) && fs.statSync(full).isFile() ? fs.readFileSync(full, "utf8") : null;
 
   if (existing !== null) {
-    // keep the previous version before overwriting
+    // keep the previous version before overwriting; never overwrite an earlier backup ("wx" fails if the name exists)
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const backup = path.join(root, ".hermy-backups", `${rel}.${stamp}`);
-    fs.mkdirSync(path.dirname(backup), { recursive: true });
-    fs.writeFileSync(backup, existing, "utf8");
+    fs.mkdirSync(path.dirname(path.join(root, ".hermy-backups", rel)), { recursive: true });
+    for (let i = 0; i < 1000; i++) {
+      const backup = path.join(root, ".hermy-backups", `${rel}.${stamp}${i ? `-${i}` : ""}`);
+      try { fs.writeFileSync(backup, existing, { encoding: "utf8", flag: "wx" }); break; }
+      catch (err) { if (err.code !== "EEXIST") throw err; }
+    }
   }
   const m = existing?.match(FM_RE);
   if (m) {

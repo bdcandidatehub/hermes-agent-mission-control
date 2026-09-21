@@ -1,32 +1,48 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { DEFAULT_WIKI_CONFIG, resolveLinkGraph, type WikiConfig } from "@/lib/wiki-links";
 import { initialStatus, MAX_PROMPT_CHARS, safeWikiPath, slugify } from "@/lib/hermes-policy";
 
-// GET ?q=&type=&status= → list/search wiki entries (mirrored by the bridge)
+// GET ?q=&type=&status= → list/search wiki entries (mirrored by the bridge), with resolved [[links]] and backlinks.
+//   status=active (default) hides archived/superseded notes; status=all shows everything; anything else matches exactly.
+//   Vault notes use their own statuses (seed, growing, mature, archived), so "active" means "not archived".
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") || "").trim();
   const type = url.searchParams.get("type");
   const status = url.searchParams.get("status") || "active";
-  const where: Record<string, unknown> = {};
-  if (status !== "all") where.status = status;
+  const statusWhere = status === "all" ? {} : status === "active" ? { status: { notIn: ["archived", "superseded"] } } : { status };
+
+  const where: Record<string, unknown> = { ...statusWhere };
   if (type && type !== "all") where.type = type;
   if (q) where.OR = [
     { title: { contains: q, mode: "insensitive" } },
     { body: { contains: q, mode: "insensitive" } },
     { tags: { has: q.toLowerCase() } },
   ];
-  const entries = await prisma.hermesMemory.findMany({ where, orderBy: { updatedAt: "desc" }, take: 300 });
-  const all = await prisma.hermesMemory.findMany({ select: { type: true }, where: status === "all" ? {} : { status } });
+  const [entries, counted, graphRows, cfgRow] = await Promise.all([
+    prisma.hermesMemory.findMany({ where, orderBy: { updatedAt: "desc" }, take: 300 }),
+    prisma.hermesMemory.findMany({ select: { type: true }, where: statusWhere }),
+    // links/backlinks are computed over ALL notes so filtering never hides a connection
+    prisma.hermesMemory.findMany({ select: { id: true, title: true, path: true, links: true } }),
+    prisma.dataStore.findUnique({ where: { key: "wiki-config" } }),
+  ]);
   const typeCounts: Record<string, number> = {};
-  for (const e of all) typeCounts[e.type] = (typeCounts[e.type] || 0) + 1;
-  const lastSync = entries[0]?.syncedAt ?? null;
-  return NextResponse.json({ entries, typeCounts, total: all.length, lastSync });
+  for (const e of counted) typeCounts[e.type] = (typeCounts[e.type] || 0) + 1;
+  const graph = resolveLinkGraph(graphRows);
+  const config = { ...DEFAULT_WIKI_CONFIG, ...((cfgRow?.data as Partial<WikiConfig> | null) ?? {}) };
+  return NextResponse.json({
+    entries: entries.map((e) => ({ ...e, resolvedLinks: graph.get(e.id)?.links ?? [], backlinks: graph.get(e.id)?.backlinks ?? [] })),
+    typeCounts, total: counted.length, lastSync: entries[0]?.syncedAt ?? null, config,
+  });
 }
 
 // POST { path?, id?, type, title, body, tags?, links?, status?, confidence? }
 // → queue a wiki write for the bridge (writes the .md file + git commit on the mini).
 export async function POST(req: Request) {
+  const cfg = (await prisma.dataStore.findUnique({ where: { key: "wiki-config" } }))?.data as Partial<WikiConfig> | null;
+  if (cfg?.mode && cfg.mode !== "edit")
+    return NextResponse.json({ error: "This wiki is read-only from the dashboard. Add a source instead.", mode: cfg.mode }, { status: 409 });
   const b = await req.json().catch(() => ({}));
   const title = (b.title || "").toString().trim();
   if (!title) return NextResponse.json({ error: "title required" }, { status: 400 });

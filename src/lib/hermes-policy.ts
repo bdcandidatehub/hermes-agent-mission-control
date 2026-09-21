@@ -17,6 +17,7 @@ export const KIND_TIERS: Record<string, Tier> = {
   kanban: "auto",
   "briefing.generate": "auto",
   "memory.write": "auto", // path-confined to the wiki dir by the bridge
+  "source.add": "auto", // creates a NEW note in the vault's sources folder; never overwrites
   "cron.create": "approve",
   "cron.edit": "approve",
   "cron.run": "approve",

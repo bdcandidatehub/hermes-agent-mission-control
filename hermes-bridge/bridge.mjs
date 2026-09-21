@@ -25,7 +25,8 @@ import path from "node:path";
 import os from "node:os";
 import { parseStatus } from "./status.mjs";
 import { shouldGenerateBrief } from "./brief.mjs";
-import { deriveTitle, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
+import { deriveTitle, extractWikilinks, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
+import { detectVault, writeSourceNote } from "./vault.mjs";
 
 const execFileP = promisify(execFile);
 const HERMES = process.env.HERMES_BIN || "hermes";
@@ -40,6 +41,14 @@ const SKIP = { dirs: new Set(WIKI_SKIP.filter((x) => !x.endsWith(".md"))), files
 // Dashboard edits only touch the file (a backup of the old version goes to .hermy-backups/).
 // Set HERMES_WIKI_GIT=1 to also `git init` (if needed) and commit each dashboard edit.
 const WIKI_GIT = process.env.HERMES_WIKI_GIT === "1";
+// How the dashboard may change the wiki:
+//   edit     (default) edit notes in place (frontmatter merged, old version backed up)
+//   capture  compiled notes are read-only; new material is saved as source notes in HERMES_RAW_DIR for your own ingest
+//   readonly the dashboard never writes to the vault
+const WIKI_MODE = ["edit", "capture", "readonly"].includes(process.env.HERMES_WIKI_MODE ?? "edit") ? (process.env.HERMES_WIKI_MODE ?? "edit") : "edit";
+const TAG_TYPES = new Set(["concept", "entity", "topic", "project", "log"]);
+const VAULT = detectVault(WIKI_DIR); // enclosing Obsidian vault, if any
+const RAW_DIR = process.env.HERMES_RAW_DIR || (VAULT && fs.existsSync(path.join(VAULT.root, "Raw", "Sources")) ? path.join(VAULT.root, "Raw", "Sources") : null);
 const BRIEF_HOUR = Number(process.env.BRIEF_HOUR || 8);   // local hour to auto-generate the daily brief
 const BRIEF_PROMPT =
   "You are the operator's chief of staff. Produce today's brief. Read your memory wiki open-loops " +
@@ -70,7 +79,7 @@ const pool = new pg.Pool({ connectionString: DB_URL, max: 4, ssl: sslOpt });
  *   approve → runs ONLY when status is approved
  * Unknown kinds never run. */
 const KIND_TIERS = {
-  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto",
+  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto", "source.add": "auto",
   "cron.create": "approve", "cron.edit": "approve", "cron.run": "approve", "cron.remove": "approve",
   "cron.pause": "auto", "cron.resume": "auto",
 };
@@ -162,6 +171,16 @@ async function mirrorCost() {
   }
 }
 
+// Tells the dashboard how it may treat the wiki and how to build "Open in Obsidian" links.
+async function mirrorWikiConfig() {
+  const rawPrefix = VAULT && RAW_DIR ? path.relative(VAULT.root, RAW_DIR).split(path.sep).join("/") : null;
+  await setStore("wiki-config", {
+    mode: WIKI_MODE,
+    vault: VAULT ? { name: VAULT.name, wikiPrefix: VAULT.prefix, rawPrefix } : null,
+    canCapture: WIKI_MODE !== "readonly" && !!RAW_DIR,
+  });
+}
+
 async function mirrorHealth() {
   let online = false, gateway = "unknown", detail = "";
   try {
@@ -183,28 +202,33 @@ async function mirrorWiki() {
     let raw = ""; try { raw = fs.readFileSync(file, "utf8"); } catch { continue; }
     const { fm, body } = parseEntry(raw);
     const sc = (v) => (Array.isArray(v) ? v.join(", ") : v ?? null); // scalar columns: flatten list-valued keys
+    const tagList = Array.isArray(fm.tags) ? fm.tags : [];
+    const noteType = sc(fm.type) || tagList.find((t) => TAG_TYPES.has(String(t).toLowerCase())) || "fact"; // vault notes carry their kind as a tag
+    const links = [...new Set([...(Array.isArray(fm.links) ? fm.links : []), ...extractWikilinks(body)])];
     try {
       await q(
-        `INSERT INTO "HermesMemory" (id, path, type, title, status, confidence, provenance, tags, links, body, "validFrom", "validTo", "updatedAt", "syncedAt")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), now())
+        `INSERT INTO "HermesMemory" (id, path, type, title, status, confidence, provenance, tags, links, body, "validFrom", "validTo", sources, "updatedAt", "syncedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), now())
          ON CONFLICT (id) DO UPDATE SET path=EXCLUDED.path, type=EXCLUDED.type, title=EXCLUDED.title,
            status=EXCLUDED.status, confidence=EXCLUDED.confidence, provenance=EXCLUDED.provenance,
-           tags=EXCLUDED.tags, links=EXCLUDED.links, body=EXCLUDED.body,
+           tags=EXCLUDED.tags, links=EXCLUDED.links, body=EXCLUDED.body, sources=EXCLUDED.sources,
            "validFrom"=EXCLUDED."validFrom", "validTo"=EXCLUDED."validTo", "syncedAt"=now()`,
-        [id, rel, sc(fm.type) || "fact", sc(fm.title) || deriveTitle(rel, body) || id, sc(fm.status) || "active", sc(fm.confidence),
-         sc(fm.provenance), Array.isArray(fm.tags) ? fm.tags : [], Array.isArray(fm.links) ? fm.links : [],
-         body, fm.valid_from || null, fm.valid_to || null]
+        [id, rel, noteType, sc(fm.title) || deriveTitle(rel, body) || id, sc(fm.status) || "active", sc(fm.confidence),
+         sc(fm.provenance), tagList, links,
+         body, fm.valid_from || null, fm.valid_to || null, Array.isArray(fm.sources) ? fm.sources.map(String) : []]
       );
     } catch (e) { log("wiki entry skipped (previous copy kept):", rel, e.message.split("\n")[0]); }
   }
   if (seen.size) await q(`DELETE FROM "HermesMemory" WHERE id <> ALL($1::text[])`, [[...seen]]);
   else await q(`DELETE FROM "HermesMemory"`);
 }
-async function gitCommitWiki(msg) {
+async function gitCommitWiki(msg, relFile) {
   try {
-    if (!fs.existsSync(path.join(WIKI_DIR, ".git"))) await execFileP("git", ["-C", WIKI_DIR, "init"]).catch(() => {});
-    await execFileP("git", ["-C", WIKI_DIR, "add", "-A"]).catch(() => {});
-    await execFileP("git", ["-C", WIKI_DIR, "commit", "-m", msg]).catch(() => {});
+    const inside = await execFileP("git", ["-C", WIKI_DIR, "rev-parse", "--is-inside-work-tree"]).then((r) => r.stdout.trim() === "true", () => false);
+    if (!inside) await execFileP("git", ["-C", WIKI_DIR, "init"]).catch(() => {}); // only for a wiki that isn't already in a repo
+    // Commit ONLY the file we wrote (pathspec), so anything else you have staged stays staged.
+    await execFileP("git", ["-C", WIKI_DIR, "add", "--", relFile]).catch(() => {});
+    await execFileP("git", ["-C", WIKI_DIR, "commit", "-m", msg, "--", relFile]).catch(() => {});
   } catch { /* ignore */ }
 }
 
@@ -255,11 +279,17 @@ async function runRequest(r) {
       result = (await hermes(argv, { timeout: 20000 })).trim();
       await mirrorCrons();
     } else if (r.kind === "memory.write") {
+      if (WIKI_MODE !== "edit") throw new Error(`This wiki is read-only from the dashboard (HERMES_WIKI_MODE=${WIKI_MODE}). Add a source instead.`);
       const e = JSON.parse(r.prompt || "{}");
       const rel = writeWiki(WIKI_DIR, e);
-      if (WIKI_GIT) await gitCommitWiki(`wiki: update ${rel} (via dashboard)`);
+      if (WIKI_GIT) await gitCommitWiki(`wiki: update ${rel} (via dashboard)`, rel);
       await mirrorWiki();
       result = `wrote ${rel}`;
+    } else if (r.kind === "source.add") {
+      if (WIKI_MODE === "readonly") throw new Error("The dashboard is read-only for this vault (HERMES_WIKI_MODE=readonly).");
+      if (!RAW_DIR) throw new Error("No sources folder configured (set HERMES_RAW_DIR).");
+      const file = writeSourceNote(RAW_DIR, JSON.parse(r.prompt || "{}"));
+      result = `saved ${file} to the sources folder; your ingest will pick it up`;
     } else if (r.kind === "briefing.generate") {
       await generateBriefing();
       result = "brief updated";
@@ -303,6 +333,7 @@ async function mirrorTick() {
   try { await mirrorKanban(); } catch (e) { log("mirrorKanban err", e.message); }
   try { await mirrorCrons(); } catch (e) { log("mirrorCrons err", e.message); }
   try { await mirrorHealth(); } catch (e) { log("mirrorHealth err", e.message); }
+  try { await mirrorWikiConfig(); } catch (e) { log("mirrorWikiConfig err", e.message); }
   try { await mirrorWiki(); } catch (e) { log("mirrorWiki err", e.message); }
   try { await mirrorCost(); } catch (e) { log("mirrorCost err", e.message); }
 }
