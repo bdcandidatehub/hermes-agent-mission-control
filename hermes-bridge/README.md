@@ -10,7 +10,7 @@ website  ◀──read HermesTask/────   Postgres  ◀──mirror──
 
 ## What it does
 - **Pull (Hermes → website):** mirrors the kanban board into `HermesTask`, cron list + health into `DataStore`, and writes activity to `AgentEvent`.
-- **Push (website → Hermes):** runs `AgentRequest` rows that are `queued` (safe) or `approved` (you approved a side-effecting one) via the `hermes` CLI, then writes results back. It never runs `awaiting_approval` rows.
+- **Push (website → Hermes):** runs `AgentRequest` rows that are `queued` (safe) or `approved` (you approved a side-effecting one) via the `hermes` CLI, then writes results back. It re-checks the approval policy itself: cron create/edit/run/remove run only once `approved`, unknown request kinds are rejected, and wiki writes are confined to `HERMES_WIKI`. It never runs `awaiting_approval` rows.
 
 ## Setup (on the Mac mini)
 1. Copy this folder to the mini (or `git pull` the repo there).
@@ -36,6 +36,7 @@ website  ◀──read HermesTask/────   Postgres  ◀──mirror──
 | var | default | meaning |
 |---|---|---|
 | `DATABASE_URL` | — (required) | same Postgres the website uses |
+| `PGSSL_INSECURE` | unset | set to `1` only if your Postgres provider uses a self-signed certificate chain (the bridge verifies TLS by default) |
 | `HERMES_BOARD` | `default` | kanban board slug to mirror |
 | `HERMES_BIN` | `hermes` | path to the CLI if not on PATH |
 | `BRIDGE_POLL_MS` | `5000` | how often to check for new requests |

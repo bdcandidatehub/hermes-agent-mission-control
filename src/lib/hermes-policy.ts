@@ -25,6 +25,10 @@ export const KIND_TIERS: Record<string, Tier> = {
   "cron.remove": "approve",
 };
 
+// Kinds the generic /api/hermes/dispatch endpoint may create. Structured kinds (cron.*, memory.write)
+// carry JSON args and are created only by their own validating routes (/api/hermes/crons, /api/hermes/memory).
+export const DISPATCHABLE_KINDS = new Set(["oneshot", "chat", "kanban"]);
+
 export const MAX_PROMPT_CHARS = 20_000;
 
 export function tierFor(kind: string): Tier | null {

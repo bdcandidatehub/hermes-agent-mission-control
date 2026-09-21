@@ -50,29 +50,27 @@ environment variables.
 
 ## Features
 
-**Cockpit**
-- Dashboard home with an at-a-glance view of the agent, tasks, and the day
-- ⌘K command palette to jump anywhere or fire an action
-- Chief-of-Staff daily brief, generated on a schedule
+**Business OS** — one place to run every revenue stream
+- **Today** (`/`): MRR, open pipeline, follow-ups that need you, and anything waiting on your approval
+- **Pipeline** (`/pipeline`): a kanban board per *venture* (a revenue stream such as a SaaS, web projects, or consulting). Ventures are config: an ordered list of stages plus playbooks, so a new stream needs no new code
+- **Shared CRM**: companies and contacts are shared across ventures, so one prospect can be cross-sold. Contacts carry a CASL consent basis and an unsubscribe flag
+- **Playbooks**: reusable Hermes prompts (research a company, draft an intro email, draft a LinkedIn note, prep a demo) rendered against a deal and run through the bridge. They only produce drafts; nothing is ever sent for you
 
 **Hermes control hub** (`/hermes`)
 - Dispatch one-shot prompts or kanban tasks to the agent
-- Approval inbox — side-effecting requests wait here for your explicit go-ahead
+- Approval inbox: cron changes and other side-effecting requests wait here for your explicit go-ahead
 - Live activity feed and run history
 - Cron list and health mirrored from the agent
 
+**Cockpit**
+- ⌘K command palette to jump anywhere or fire an action
+- Chief-of-Staff daily brief, generated on a schedule
+
 **Memory**
-- Memory Wiki — browse and edit the agent's memory (facts, notes, links) as a wiki
+- Memory Wiki: browse and edit the agent's memory (facts, notes, links) as a wiki
 
-**Work & content**
-- Tasks and Ideas boards
-- Content OS — an X / Twitter content pipeline (drafts, scoring, scheduling)
-- Longform + YouTube script studios
-- Client Pulse — a client-health tracking board (bring your own data ingestion)
-- Agents roster and Watchlist Radar
-
-> Some features need your own API keys (YouTube, X/Twitter, OpenAI, etc.). They are
-> all optional and configured via env — the core dashboard runs without them.
+> The template ships with one seeded venture, **CandidateHub** (edit `prisma/seed.ts`
+> to match your own offer, voice and stages). No third-party API keys are required.
 
 ---
 
@@ -125,6 +123,7 @@ access to Postgres and your local `hermes` CLI. See
 - **Framework:** Next.js 16 (App Router) + React 19
 - **Styling:** Tailwind CSS v4
 - **Data:** Prisma ORM + PostgreSQL
+- **Tests:** `npm test` (policy, CRM helpers, and the bridge wiki writer)
 - **Auth:** NextAuth with Google login (email allowlist)
 - **Deploy:** Vercel (website) + launchd/systemd (bridge)
 - **Agent:** [Hermes](https://github.com/NousResearch/hermes-agent) `hermes` CLI
@@ -158,8 +157,9 @@ cp .env.example .env
 ```
 
 Open `.env` and fill in at least the **required core** vars: `DATABASE_URL`,
-`POSTGRES_URL`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAILS`, and `NEXT_PUBLIC_OWNER_NAME`.
+`NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, and `ALLOWED_EMAILS`. (`INTERNAL_API_SECRET` is optional:
+it only enables machine-to-machine API calls.)
 Every variable is documented inline in [`.env.example`](./.env.example).
 
 Generate a secret with:
@@ -168,11 +168,15 @@ Generate a secret with:
 openssl rand -base64 32
 ```
 
-### 3. Create the database tables
+### 3. Create the database tables and seed your first venture
 
 ```sh
 npx prisma db push
+npm run db:seed     # adds the CandidateHub venture + playbooks (safe to re-run)
 ```
+
+> Use a fresh database. This schema dropped the old content-creator tables, so
+> `db push` against an older Hermy HQ database will ask to delete them.
 
 ### 4. Run locally
 
@@ -195,7 +199,7 @@ Then:
 
 1. Add **every** env var from your `.env` in **Project → Settings → Environment
    Variables**.
-2. Set `NEXTAUTH_URL` and `NEXT_PUBLIC_BASE_URL` to your production URL.
+2. Set `NEXTAUTH_URL` to your production URL.
 3. In the Google Cloud console, add the authorized redirect URI
    `https://<your-domain>/api/auth/callback/google`.
 

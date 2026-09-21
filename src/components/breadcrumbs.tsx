@@ -4,18 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const pathLabels: Record<string, string> = {
-  "/": "Dashboard",
-  "/x": "X",
-  "/x-content": "Tweets",
-  "/x-analytics": "X Analytics",
-  "/watchlist-radar": "Trend Radar",
-  "/youtube": "YouTube",
-  "/longform": "Longform",
-  "/articles": "Articles",
-  "/client-pulse": "Client Pulse",
-  "/agents": "Agents",
-  "/ideas": "Ideas",
-  "/tasks": "Tasks",
+  "/": "Today",
+  "/pipeline": "Pipeline",
+  "/hermes": "Hermes",
+  "/memory-wiki": "Memory Wiki",
 };
 
 export function Breadcrumbs() {
@@ -32,7 +24,7 @@ export function Breadcrumbs() {
         href="/" 
         className="hover:text-neutral-300 transition-colors"
       >
-        Dashboard
+        Today
       </Link>
       <span>/</span>
       <span className="text-neutral-400">{currentLabel}</span>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { initialStatus, MAX_PROMPT_CHARS, tierFor } from "@/lib/hermes-policy";
+import { DISPATCHABLE_KINDS, initialStatus, MAX_PROMPT_CHARS, tierFor } from "@/lib/hermes-policy";
 
 // POST { kind?, title, prompt?, sideEffecting? } → queue work for Hermes.
 // The approval tier is decided server-side from `kind` (see lib/hermes-policy.ts).
@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   if (!title) return NextResponse.json({ error: "title or prompt required" }, { status: 400 });
 
   const kind = (b.kind || "oneshot").toString();
-  if (!tierFor(kind)) return NextResponse.json({ error: `unsupported kind: ${kind}` }, { status: 400 });
+  if (!DISPATCHABLE_KINDS.has(kind) || !tierFor(kind)) return NextResponse.json({ error: `unsupported kind: ${kind}` }, { status: 400 });
 
   const prompt = (b.prompt ?? b.title ?? "").toString();
   if (prompt.length > MAX_PROMPT_CHARS) return NextResponse.json({ error: "prompt too long" }, { status: 413 });
