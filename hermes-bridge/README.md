@@ -38,6 +38,8 @@ website  ◀──read HermesTask/────   Postgres  ◀──mirror──
 | `DATABASE_URL` | — (required) | same Postgres the website uses |
 | `HERMES_WIKI_MODE` | `edit` | `edit`, `capture` (compiled notes read-only; new material saved as source notes in `HERMES_RAW_DIR`) or `readonly` |
 | `HERMES_RAW_DIR` | `<vault>/Raw/Sources` | where `capture` mode saves new source notes (auto-detected inside an Obsidian vault) |
+| `FRIDAY_SESSION` | `hermy-dashboard` | the Hermes session Friday's dashboard conversation continues in (`hermes chat --continue`) |
+| `FRIDAY_MODEL` | unset | optional model for Friday's chat turns only (`hermes chat -m`) |
 | `PGSSL_INSECURE` | unset | set to `1` only if your Postgres provider uses a self-signed certificate chain (the bridge verifies TLS by default) |
 | `HERMES_BOARD` | `default` | kanban board slug to mirror |
 | `HERMES_BIN` | `hermes` | path to the CLI if not on PATH |

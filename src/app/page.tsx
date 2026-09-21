@@ -7,6 +7,7 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { EmptyState, Eyebrow, Panel, Pill, SectionHeader, Skeleton, rise } from "@/components/ui/kit";
 import { HermesBriefing } from "@/components/hermes-briefing";
 import { ApprovalInbox } from "@/components/approval-inbox";
+import { FridayPanel } from "@/components/friday/friday-panel";
 import { fmtMoney, stageLabel, type DueBucket, type VentureSummary } from "@/lib/crm";
 import type { Funnel } from "@/lib/outreach";
 
@@ -75,6 +76,10 @@ export default function Home() {
       <div className="hq-rise" style={rise(0)}>
         <Eyebrow>{new Date().toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}</Eyebrow>
         <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.02em] text-[var(--text)]">Today</h1>
+      </div>
+
+      <div className="hq-rise" style={rise(1)}>
+        <FridayPanel />
       </div>
 
       {error && !data && (

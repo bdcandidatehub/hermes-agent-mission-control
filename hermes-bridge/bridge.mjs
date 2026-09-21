@@ -24,6 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { parseStatus } from "./status.mjs";
+import { composeQuery, parseChatOutput } from "./friday.mjs";
 import { shouldGenerateBrief } from "./brief.mjs";
 import { deriveTitle, extractWikilinks, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
 import { detectVault, writeSourceNote } from "./vault.mjs";
@@ -46,6 +47,10 @@ const WIKI_GIT = process.env.HERMES_WIKI_GIT === "1";
 //   capture  compiled notes are read-only; new material is saved as source notes in HERMES_RAW_DIR for your own ingest
 //   readonly the dashboard never writes to the vault
 const WIKI_MODE = ["edit", "capture", "readonly"].includes(process.env.HERMES_WIKI_MODE ?? "edit") ? (process.env.HERMES_WIKI_MODE ?? "edit") : "edit";
+// Friday: the dashboard's talking chief of staff. One persistent Hermes session so she remembers the conversation.
+const FRIDAY_SESSION = process.env.FRIDAY_SESSION || "hermy-dashboard";
+const FRIDAY_MODEL = process.env.FRIDAY_MODEL || ""; // optional: a faster model just for chat (passed as `hermes chat -m`)
+const FRIDAY_TIMEOUT_MS = Number(process.env.FRIDAY_TIMEOUT_MS || 120000);
 const TAG_TYPES = new Set(["concept", "entity", "topic", "project", "log"]);
 const VAULT = detectVault(WIKI_DIR); // enclosing Obsidian vault, if any
 const RAW_DIR = process.env.HERMES_RAW_DIR || (VAULT && fs.existsSync(path.join(VAULT.root, "Raw", "Sources")) ? path.join(VAULT.root, "Raw", "Sources") : null);
@@ -79,7 +84,7 @@ const pool = new pg.Pool({ connectionString: DB_URL, max: 4, ssl: sslOpt });
  *   approve → runs ONLY when status is approved
  * Unknown kinds never run. */
 const KIND_TIERS = {
-  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto", "source.add": "auto",
+  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto", "source.add": "auto", "friday.chat": "auto",
   "cron.create": "approve", "cron.edit": "approve", "cron.run": "approve", "cron.remove": "approve",
   "cron.pause": "auto", "cron.resume": "auto",
 };
@@ -260,7 +265,8 @@ async function maybeDailyBrief() {
 /* ─────────────── PUSH: run website requests via Hermes ─────────────── */
 async function runRequest(r) {
   await q(`UPDATE "AgentRequest" SET status='running', "startedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id]);
-  await emit("run", `Started: ${r.title}`, { level: "info", meta: { requestId: r.id, kind: r.kind } });
+  const quiet = r.kind === "friday.chat"; // chat turns stay out of the activity feed
+  if (!quiet) await emit("run", `Started: ${r.title}`, { level: "info", meta: { requestId: r.id, kind: r.kind } });
   try {
     let result = "";
     if (r.kind === "oneshot" || r.kind === "chat") {
@@ -285,6 +291,13 @@ async function runRequest(r) {
       if (WIKI_GIT) await gitCommitWiki(`wiki: update ${rel} (via dashboard)`, rel);
       await mirrorWiki();
       result = `wrote ${rel}`;
+    } else if (r.kind === "friday.chat") {
+      const t = JSON.parse(r.prompt || "{}");
+      if (!t.message) throw new Error("empty message");
+      const args = ["chat", "-Q", "-q", composeQuery({ message: t.message, context: t.context }), "--continue", FRIDAY_SESSION, "--create-if-missing"];
+      if (FRIDAY_MODEL) args.push("-m", FRIDAY_MODEL);
+      result = parseChatOutput(await hermes(args, { timeout: FRIDAY_TIMEOUT_MS }));
+      if (!result) throw new Error("Friday returned nothing");
     } else if (r.kind === "source.add") {
       if (WIKI_MODE === "readonly") throw new Error("The dashboard is read-only for this vault (HERMES_WIKI_MODE=readonly).");
       if (!RAW_DIR) throw new Error("No sources folder configured (set HERMES_RAW_DIR).");
@@ -298,7 +311,7 @@ async function runRequest(r) {
     }
     await q(`UPDATE "AgentRequest" SET status='done', result=$2, "finishedAt"=now(), "updatedAt"=now() WHERE id=$1`,
       [r.id, result.slice(0, 8000)]);
-    await emit("run", `Done: ${r.title}`, { level: "up", detail: result.slice(0, 400), meta: { requestId: r.id } });
+    if (!quiet) await emit("run", `Done: ${r.title}`, { level: "up", detail: result.slice(0, 400), meta: { requestId: r.id } });
   } catch (e) {
     const msg = (e.stderr || e.message || "error").toString().split("\n")[0].slice(0, 600);
     await q(`UPDATE "AgentRequest" SET status='failed', error=$2, "finishedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id, msg]);
@@ -309,7 +322,7 @@ async function runRequest(r) {
 
 async function processQueue() {
   const { rows } = await q(
-    `SELECT * FROM "AgentRequest" WHERE status IN ('queued','approved') ORDER BY "createdAt" ASC LIMIT 20`
+    `SELECT * FROM "AgentRequest" WHERE status IN ('queued','approved') AND kind <> 'friday.chat' ORDER BY "createdAt" ASC LIMIT 20`
   );
   let ran = 0;
   for (const r of rows) {
@@ -326,6 +339,12 @@ async function processQueue() {
     await runRequest(r);
     if (++ran >= 3) break;
   }
+}
+
+// Friday's own lane: polled fast and separately, so a spoken conversation never waits behind cron work or other requests.
+async function processFriday() {
+  const { rows } = await q(`SELECT * FROM "AgentRequest" WHERE kind='friday.chat' AND status IN ('queued','approved') ORDER BY "createdAt" ASC LIMIT 1`);
+  if (rows[0] && canRun(rows[0])) await runRequest(rows[0]);
 }
 
 /* ─────────────── loops ─────────────── */
@@ -347,6 +366,7 @@ async function main() {
     run();
   };
   loop("queue", POLL_MS, processQueue);
+  loop("friday", 700, processFriday);
   loop("mirror", MIRROR_MS, mirrorTick);
   loop("brief", 60_000, maybeDailyBrief);
 }

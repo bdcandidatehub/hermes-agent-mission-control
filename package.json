@@ -15,6 +15,8 @@
     "test": "tsx --test tests/*.test.ts",
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose stop postgres",
+    "tts:up": "docker compose --profile voice up -d --wait tts",
+    "tts:down": "docker compose --profile voice stop tts",
     "bridge": "node --env-file=.env hermes-bridge/bridge.mjs"
   },
   "dependencies": {

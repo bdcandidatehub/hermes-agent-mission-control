@@ -69,6 +69,12 @@ environment variables.
 - Live activity feed and run history
 - Cron list and health mirrored from the agent
 
+**Friday: talk to your chief of staff** (top of the Today page)
+- A living neural-brain graphic that reacts to whether Friday is listening, thinking or speaking, and moves with her actual voice
+- Text chat, or push-to-talk voice input (your browser's speech recognition), with replies read aloud by a **local open-source voice** (Kokoro)
+- One persistent Hermes session, so she remembers the conversation; she also sees a short snapshot of your pipeline and follow-ups
+- Everything she says is also on screen; voice and motion are optional layers over a fully working text chat
+
 **Cockpit**
 - ⌘K command palette to jump anywhere or fire an action
 - Chief-of-Staff daily brief, generated on a schedule
@@ -173,6 +179,13 @@ HERMES_WIKI="/path/to/the/bind-mounted/wiki"                            # the fo
     in the vault's own source format, never overwriting anything) for your ingest to compile. Use this for vaults with a schema.
   - `readonly`: the dashboard never writes to the vault.
   Don't enable `HERMES_WIKI_GIT` for a vault that already has uncommitted work.
+- **Friday's voice** (optional, `npm run tts:up`): starts [Kokoro-82M](https://github.com/remsky/Kokoro-FastAPI) (Apache-2.0) in Docker on
+  `127.0.0.1:8880` (first run downloads ~1.4 GB, ~4.5 GB on disk). The dashboard proxies to it, so nothing about it is exposed. Without it,
+  Friday falls back to your browser's built-in voice. Choose a voice with `FRIDAY_TTS_VOICE` (British female: `bf_emma`, `bf_isabella`,
+  `bf_alice`, `bf_lily`; British male: `bm_george`, `bm_lewis`, `bm_daniel`). Any OpenAI-compatible `/v1/audio/speech` server works via
+  `FRIDAY_TTS_URL`. Note: Docker on macOS can't use the Apple GPU, so synthesis runs at roughly real time; keep replies short.
+- **Friday's chat** runs on its own fast lane in the bridge (`hermes chat --continue <session>`), not behind cron work. Each turn is one Hermes
+  agent run, typically 15-20 s. Set `FRIDAY_MODEL` to use a faster model just for chat.
 - **The dev server skips login.** That's why `npm run dev` listens on `127.0.0.1` only. To expose it anywhere else, use the
   production build (`npm run build && npm start`) with Google login instead.
 - **The daily brief** is generated once per local day after `BRIEF_HOUR`, by the bridge (a real Hermes run). Restarting the bridge
