@@ -104,7 +104,11 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const q = (text, params) => pool.query(text, params);
 
 async function hermes(args, { timeout = 30000 } = {}) {
-  const { stdout } = await execFileP(HERMES, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
+  // HERMES_EXEC_TIMEOUT_MS lets a wrapper (e.g. hermes-docker.sh) enforce this same deadline where the
+  // process actually runs, not just where we're killing our own client — see that script for why that
+  // distinction matters. A plain local `hermes` binary just ignores the extra env var.
+  const env = { ...process.env, HERMES_EXEC_TIMEOUT_MS: String(timeout) };
+  const { stdout } = await execFileP(HERMES, args, { timeout: timeout + 15000, maxBuffer: 8 * 1024 * 1024, env });
   return stdout;
 }
 
