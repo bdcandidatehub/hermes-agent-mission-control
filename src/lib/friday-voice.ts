@@ -149,17 +149,32 @@ export function recognitionSupported(): boolean {
 
 export interface Listener { stop(): void; abort(): void }
 
-// One utterance: interim text as you speak, then a final transcript when you pause.
-export function listenOnce(handlers: { onInterim: (t: string) => void; onFinal: (t: string) => void; onEnd: () => void; onError: (code: string) => void }): Listener | null {
+// How long to wait, after the last word detected, before treating a pause as "done talking".
+// The Web Speech API has no such setting itself — with continuous:false the browser's own endpointer
+// decides that, and on Chrome in particular it can cut you off after well under a second. So we run in
+// continuous mode instead (it never auto-ends on a pause) and time the silence ourselves.
+const SILENCE_MS = 3500;
+
+// One turn: interim text as you speak, then a final transcript once you've been quiet for SILENCE_MS.
+export function listenOnce(
+  handlers: { onInterim: (t: string) => void; onFinal: (t: string) => void; onEnd: () => void; onError: (code: string) => void },
+  silenceMs = SILENCE_MS
+): Listener | null {
   const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
   const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
   if (!Ctor) return null;
   const rec = new Ctor();
   rec.lang = navigator.language || "en-CA";
   rec.interimResults = true;
-  rec.continuous = false;
+  rec.continuous = true; // keep listening through natural pauses; our own timer below decides when the turn ends
   rec.maxAlternatives = 1;
   let finalText = "";
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearSilence = () => { if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; } };
+  // Any activity (even an interim word) pushes the deadline out; stop() lets the engine flush a trailing
+  // final result for whatever it just heard, rather than dropping it the way abort() would.
+  const armSilence = () => { clearSilence(); silenceTimer = setTimeout(() => { try { rec.stop(); } catch { /* already stopping */ } }, silenceMs); };
+
   rec.onresult = (e) => {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -167,9 +182,13 @@ export function listenOnce(handlers: { onInterim: (t: string) => void; onFinal: 
       if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
     }
     handlers.onInterim((finalText + interim).trim());
+    armSilence();
   };
-  rec.onerror = (e) => handlers.onError(e.error);
-  rec.onend = () => { if (finalText.trim()) handlers.onFinal(finalText.trim()); handlers.onEnd(); };
-  try { rec.start(); } catch { handlers.onError("start-failed"); return null; }
-  return { stop: () => rec.stop(), abort: () => rec.abort() };
+  rec.onerror = (e) => { clearSilence(); handlers.onError(e.error); };
+  rec.onend = () => { clearSilence(); if (finalText.trim()) handlers.onFinal(finalText.trim()); handlers.onEnd(); };
+  try { rec.start(); armSilence(); } catch { handlers.onError("start-failed"); return null; }
+  return {
+    stop: () => { clearSilence(); rec.stop(); },
+    abort: () => { clearSilence(); rec.abort(); },
+  };
 }
