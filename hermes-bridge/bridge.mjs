@@ -322,11 +322,18 @@ async function runRequest(r) {
       [r.id, result.slice(0, 8000)]);
     if (!quiet) await emit("run", `Done: ${r.title}`, { level: "up", detail: result.slice(0, 400), meta: { requestId: r.id } });
   } catch (e) {
-    // execFile kills the child when its own `timeout` option fires; e.stdout/e.stderr then hold whatever the
-    // process had printed so far (a status banner, a partial line — not a real error), which reads as nonsense
-    // and hides the actual cause. Report the timeout honestly instead of whatever scraps were captured.
-    const msg = e.killed
-      ? `timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s`
+    // A timeout can surface two ways, and both leave e.stdout/e.stderr holding whatever the process had
+    // printed so far (a status banner, a partial line — not a real error), which reads as nonsense and hides
+    // the actual cause:
+    //   - e.killed: execFile's own `timeout` option fired and it killed the child directly (a local `hermes`
+    //     binary, or the docker-exec client itself if the inner enforcement somehow didn't).
+    //   - e.code 124/137: the wrapper's own inner `timeout` (see hermes-docker.sh) killed the real process
+    //     inside the container; docker exec then just relays that exit code as its own, so execFile never
+    //     had to kill anything itself and e.killed is false even though this WAS a timeout.
+    // Report the timeout honestly either way, instead of whatever scraps were captured.
+    const timedOut = e.killed || e.code === 124 || e.code === 137;
+    const msg = timedOut
+      ? `timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s${e.code === 137 ? " (had to force-kill)" : ""}`
       : (e.stderr || e.message || "error").toString().split("\n")[0].slice(0, 600);
     await q(`UPDATE "AgentRequest" SET status='failed', error=$2, "finishedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id, msg]);
     await emit("run", `Failed: ${r.title}`, { level: "down", detail: msg, meta: { requestId: r.id } });
