@@ -185,7 +185,9 @@ HERMES_WIKI="/path/to/the/bind-mounted/wiki"                            # the fo
   `bf_alice`, `bf_lily`; British male: `bm_george`, `bm_lewis`, `bm_daniel`). Any OpenAI-compatible `/v1/audio/speech` server works via
   `FRIDAY_TTS_URL`. Note: Docker on macOS can't use the Apple GPU, so synthesis runs at roughly real time; keep replies short.
 - **Friday's chat** runs on its own fast lane in the bridge (`hermes chat --continue <session>`), not behind cron work. Each turn is one Hermes
-  agent run, typically 15-20 s. Set `FRIDAY_MODEL` to use a faster model just for chat.
+  agent run; how long that takes depends entirely on the model behind it and grows with the conversation's length (a small local model can
+  answer in seconds, a large remote one can take a couple of minutes, more as the session's history grows). The bridge gives a turn up to
+  `FRIDAY_TIMEOUT_MS` (default 5 min) before giving up — raise it for a slower model, or set `FRIDAY_MODEL` to use a faster one just for chat.
 - **The dev server skips login.** That's why `npm run dev` listens on `127.0.0.1` only. To expose it anywhere else, use the
   production build (`npm run build && npm start`) with Google login instead.
 - **The daily brief** is generated once per local day after `BRIEF_HOUR`, by the bridge (a real Hermes run). Restarting the bridge

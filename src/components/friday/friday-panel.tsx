@@ -252,7 +252,9 @@ export function FridayPanel() {
                   ) : (
                     <p className="flex items-center gap-2 text-[14px] text-[var(--text-2)]">
                       <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
-                      {waited > 45 ? "Still working. If this hangs, check that the bridge is running." : "Friday is thinking…"}
+                      {waited > 60
+                        ? "Still working — a large model can take a couple of minutes, longer as the conversation grows."
+                        : "Friday is thinking…"}
                     </p>
                   )}
                 </li>

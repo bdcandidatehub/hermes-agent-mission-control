@@ -50,7 +50,7 @@ const WIKI_MODE = ["edit", "capture", "readonly"].includes(process.env.HERMES_WI
 // Friday: the dashboard's talking chief of staff. One persistent Hermes session so she remembers the conversation.
 const FRIDAY_SESSION = process.env.FRIDAY_SESSION || "hermy-dashboard";
 const FRIDAY_MODEL = process.env.FRIDAY_MODEL || ""; // optional: a faster model just for chat (passed as `hermes chat -m`)
-const FRIDAY_TIMEOUT_MS = Number(process.env.FRIDAY_TIMEOUT_MS || 120000);
+const FRIDAY_TIMEOUT_MS = Number(process.env.FRIDAY_TIMEOUT_MS || 300000); // a 120s default proved too tight for a large/remote model on a growing session
 const TAG_TYPES = new Set(["concept", "entity", "topic", "project", "log"]);
 const VAULT = detectVault(WIKI_DIR); // enclosing Obsidian vault, if any
 const RAW_DIR = process.env.HERMES_RAW_DIR || (VAULT && fs.existsSync(path.join(VAULT.root, "Raw", "Sources")) ? path.join(VAULT.root, "Raw", "Sources") : null);
@@ -267,12 +267,15 @@ async function runRequest(r) {
   await q(`UPDATE "AgentRequest" SET status='running', "startedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id]);
   const quiet = r.kind === "friday.chat"; // chat turns stay out of the activity feed
   if (!quiet) await emit("run", `Started: ${r.title}`, { level: "info", meta: { requestId: r.id, kind: r.kind } });
+  let timeoutMs = null; // the timeout passed to whichever hermes() call is in flight, so a kill can be reported honestly
   try {
     let result = "";
     if (r.kind === "oneshot" || r.kind === "chat") {
-      result = (await hermes(["-z", String(r.prompt || r.title)], { timeout: RUN_TIMEOUT_MS })).trim();
+      timeoutMs = RUN_TIMEOUT_MS;
+      result = (await hermes(["-z", String(r.prompt || r.title)], { timeout: timeoutMs })).trim();
     } else if (r.kind === "kanban") {
-      result = (await hermes(["kanban", "--board", BOARD, "create", "--json", cliArg(r.title, "title")], { timeout: 20000 })).trim();
+      timeoutMs = 20000;
+      result = (await hermes(["kanban", "--board", BOARD, "create", "--json", cliArg(r.title, "title")], { timeout: timeoutMs })).trim();
     } else if (r.kind.startsWith("cron.")) {
       const op = r.kind.split(".")[1];
       const a = JSON.parse(r.prompt || "{}");
@@ -282,7 +285,8 @@ async function runRequest(r) {
         : ["run", "pause", "resume", "remove", "edit"].includes(op) ? ["cron", op, target()]
         : null;
       if (!argv) throw new Error(`unknown cron op ${op}`);
-      result = (await hermes(argv, { timeout: 20000 })).trim();
+      timeoutMs = 20000;
+      result = (await hermes(argv, { timeout: timeoutMs })).trim();
       await mirrorCrons();
     } else if (r.kind === "memory.write") {
       if (WIKI_MODE !== "edit") throw new Error(`This wiki is read-only from the dashboard (HERMES_WIKI_MODE=${WIKI_MODE}). Add a source instead.`);
@@ -296,7 +300,8 @@ async function runRequest(r) {
       if (!t.message) throw new Error("empty message");
       const args = ["chat", "-Q", "-q", composeQuery({ message: t.message, context: t.context }), "--continue", FRIDAY_SESSION, "--create-if-missing"];
       if (FRIDAY_MODEL) args.push("-m", FRIDAY_MODEL);
-      result = parseChatOutput(await hermes(args, { timeout: FRIDAY_TIMEOUT_MS }));
+      timeoutMs = FRIDAY_TIMEOUT_MS;
+      result = parseChatOutput(await hermes(args, { timeout: timeoutMs }));
       if (!result) throw new Error("Friday returned nothing");
     } else if (r.kind === "source.add") {
       if (WIKI_MODE === "readonly") throw new Error("The dashboard is read-only for this vault (HERMES_WIKI_MODE=readonly).");
@@ -313,7 +318,12 @@ async function runRequest(r) {
       [r.id, result.slice(0, 8000)]);
     if (!quiet) await emit("run", `Done: ${r.title}`, { level: "up", detail: result.slice(0, 400), meta: { requestId: r.id } });
   } catch (e) {
-    const msg = (e.stderr || e.message || "error").toString().split("\n")[0].slice(0, 600);
+    // execFile kills the child when its own `timeout` option fires; e.stdout/e.stderr then hold whatever the
+    // process had printed so far (a status banner, a partial line — not a real error), which reads as nonsense
+    // and hides the actual cause. Report the timeout honestly instead of whatever scraps were captured.
+    const msg = e.killed
+      ? `timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s`
+      : (e.stderr || e.message || "error").toString().split("\n")[0].slice(0, 600);
     await q(`UPDATE "AgentRequest" SET status='failed', error=$2, "finishedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id, msg]);
     await emit("run", `Failed: ${r.title}`, { level: "down", detail: msg, meta: { requestId: r.id } });
     log("request failed:", r.id, msg);
