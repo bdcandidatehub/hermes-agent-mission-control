@@ -77,6 +77,10 @@ const isLocal = /@(localhost|127\.0\.0\.1)/.test(DB_URL);
 // self-signed chain you can't add to the trust store (not recommended).
 const sslOpt = isLocal ? undefined : { rejectUnauthorized: process.env.PGSSL_INSECURE !== "1" };
 const pool = new pg.Pool({ connectionString: DB_URL, max: 4, ssl: sslOpt });
+// node-postgres emits 'error' on an idle client whose connection drops (a Postgres restart, a brief network
+// blip). With no listener, Node treats that as an unhandled 'error' event and CRASHES THE WHOLE PROCESS —
+// silently, with nothing in the log to explain why. This is exactly what killed a live bridge once already.
+pool.on("error", (e) => log("pg pool error (connection recovered automatically on next query):", e.message));
 
 /* Approval policy. Mirrors src/lib/hermes-policy.ts — keep the two in sync.
  * The bridge re-checks it so a row inserted straight into Postgres can't skip approval:
@@ -378,8 +382,20 @@ async function mirrorTick() {
   try { await mirrorCost(); } catch (e) { log("mirrorCost err", e.message); }
 }
 
+// This bridge is the only thing that ever sets status='running', so any row still 'running' when a fresh
+// instance starts belongs to a PREVIOUS instance that died (crash, `kill`, the Mac sleeping) mid-request —
+// its underlying process is gone and nothing will ever move that row forward. Left alone it sits there
+// forever: the dashboard shows an endless spinner and the request silently never gets a reply. Fail them
+// honestly on startup so the UI's own "Try again" can take over.
+async function reapStaleRunning() {
+  const { rows } = await q(`UPDATE "AgentRequest" SET status='failed', error='bridge restarted mid-request', "finishedAt"=now(), "updatedAt"=now() WHERE status='running' RETURNING id, kind, title`);
+  for (const r of rows) log("reaped stale running request:", r.id, r.kind, JSON.stringify(r.title).slice(0, 80));
+  if (rows.length) await emit("run", `Recovered from a restart: ${rows.length} stuck request(s) marked failed`, { level: "warn" });
+}
+
 async function main() {
   log(`hermes-bridge up · board=${BOARD} · poll=${POLL_MS}ms · mirror=${MIRROR_MS}ms`);
+  try { await reapStaleRunning(); } catch (e) { log("reapStaleRunning error:", e.message); }
   await emit("status", "Bridge connected", { level: "up" });
   // Three independent, non-overlapping loops: a slow mirror pass or a 4-minute brief must never delay the request queue.
   const loop = (name, ms, fn) => {
@@ -391,4 +407,11 @@ async function main() {
   loop("mirror", MIRROR_MS, mirrorTick);
   loop("brief", 60_000, maybeDailyBrief);
 }
+// Log and keep running rather than dying silently on some error path the loops' own try/catches didn't
+// anticipate — a bridge that stays up and logs a problem beats one that vanishes with no trace, which is
+// exactly what happened once already (an unhandled pg pool 'error' event, fixed above, but this is the
+// general backstop for whatever's next).
+process.on("unhandledRejection", (e) => log("unhandledRejection (bridge staying up):", e?.message ?? e));
+process.on("uncaughtException", (e) => log("uncaughtException (bridge staying up):", e?.message ?? e));
+
 main().catch((e) => { console.error("fatal", e); process.exit(1); });
