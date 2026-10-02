@@ -50,29 +50,42 @@ environment variables.
 
 ## Features
 
-**Cockpit**
-- Dashboard home with an at-a-glance view of the agent, tasks, and the day
-- ⌘K command palette to jump anywhere or fire an action
-- Chief-of-Staff daily brief, generated on a schedule
+**Business OS** — one place to run every revenue stream
+- **Today** (`/`): MRR, open pipeline, follow-ups that need you, and anything waiting on your approval
+- **Pipeline** (`/pipeline`): a kanban board per *venture* (a revenue stream such as a SaaS, web projects, or consulting). Ventures are config: an ordered list of stages plus playbooks, so a new stream needs no new code
+- **Shared CRM**: companies and contacts are shared across ventures, so one prospect can be cross-sold. Contacts carry a CASL consent basis and an unsubscribe flag
+- **Playbooks**: reusable Hermes prompts (research a company, draft an intro email, LinkedIn note, follow-up or reply, prep a demo) rendered against a deal and run through the bridge. They only produce drafts; nothing is ever sent for you
+- **CSV import**: drop in a prospect list (any spreadsheet export with a Company column). You get a dry-run preview first; re-importing is safe because companies, contacts and deals are matched, not duplicated, and unsubscribed contacts are skipped
+- **Outreach loop**: a draft comes back in the deal drawer with **Open in Gmail** (a prefilled compose window: you review and press Send) and **I sent it**. Logging outreach or a reply moves the deal, refreshes the next action, and sets a follow-up 4 business days out. Each draft can only be logged once
+- **Funnel**: the Today page shows sent, replies (with reply rate) and stage entries for the last 7 or 30 days, straight from the activity log
+
+> **Stage convention.** For every venture, the first three stages mean *new lead → first touch made → they answered*.
+> Logging outreach moves a new lead to stage 2, and a reply moves stage 1 or 2 to stage 3. Later stages (demo, trial, …)
+> only move when you move them. Name your own stages however you like, but keep that order.
 
 **Hermes control hub** (`/hermes`)
 - Dispatch one-shot prompts or kanban tasks to the agent
-- Approval inbox — side-effecting requests wait here for your explicit go-ahead
+- Approval inbox: cron changes and other side-effecting requests wait here for your explicit go-ahead
 - Live activity feed and run history
 - Cron list and health mirrored from the agent
 
+**Friday: talk to your chief of staff** (top of the Today page)
+- A living neural-brain graphic that reacts to whether Friday is listening, thinking or speaking, and moves with her actual voice
+- Text chat, or push-to-talk voice input (your browser's speech recognition), with replies read aloud by a **local open-source voice** (Kokoro)
+- One persistent Hermes session, so she remembers the conversation; she also sees a short snapshot of your pipeline and follow-ups
+- Everything she says is also on screen; voice and motion are optional layers over a fully working text chat
+
+**Cockpit**
+- ⌘K command palette to jump anywhere or fire an action
+- Chief-of-Staff daily brief, generated on a schedule
+
 **Memory**
-- Memory Wiki — browse and edit the agent's memory (facts, notes, links) as a wiki
+- Memory Wiki: browse and search the agent's memory as a wiki. If it lives in an **Obsidian vault**, it understands `[[wikilinks]]`
+  (clickable, with backlinks), shows each note's sources, and has an **Open in Obsidian** button. It can edit notes in place, or,
+  for a vault with its own ingest pipeline, capture new material as raw sources instead (see below)
 
-**Work & content**
-- Tasks and Ideas boards
-- Content OS — an X / Twitter content pipeline (drafts, scoring, scheduling)
-- Longform + YouTube script studios
-- Client Pulse — a client-health tracking board (bring your own data ingestion)
-- Agents roster, Garden, and Watchlist Radar
-
-> Some features need your own API keys (YouTube, X/Twitter, OpenAI, etc.). They are
-> all optional and configured via env — the core dashboard runs without them.
+> The template ships with one seeded venture, **CandidateHub** (edit `prisma/seed.ts`
+> to match your own offer, voice and stages). No third-party API keys are required.
 
 ---
 
@@ -125,10 +138,60 @@ access to Postgres and your local `hermes` CLI. See
 - **Framework:** Next.js 16 (App Router) + React 19
 - **Styling:** Tailwind CSS v4
 - **Data:** Prisma ORM + PostgreSQL
+- **Tests:** `npm test` (policy, CRM helpers, and the bridge wiki writer)
 - **Auth:** NextAuth with Google login (email allowlist)
-- **Charts / DnD:** Recharts, react-dnd
 - **Deploy:** Vercel (website) + launchd/systemd (bridge)
 - **Agent:** [Hermes](https://github.com/NousResearch/hermes-agent) `hermes` CLI
+
+---
+
+## Run it locally (Postgres in Docker, Hermes in Docker)
+
+The simplest setup on one Mac: Postgres in a container, the web app and the bridge running directly on the host.
+Nothing is exposed beyond `127.0.0.1`.
+
+```sh
+npm ci
+cp .env.example .env        # then set DATABASE_URL, HERMES_BIN and HERMES_WIKI as below
+npm run db:up               # Postgres on 127.0.0.1:54330 (named volume, survives restarts)
+npx prisma db push && npm run db:seed
+npm run dev                 # http://127.0.0.1:3000 (next free port if 3000 is taken), no login, this Mac only
+npm run bridge              # in a second terminal
+```
+
+`.env` for this setup:
+
+```sh
+DATABASE_URL="postgresql://hermy:hermy_local@127.0.0.1:54330/hermy"
+HERMES_BIN="/absolute/path/to/hermy-hq/hermes-bridge/hermes-docker.sh"   # runs `docker exec hermes hermes ...`
+HERMES_WIKI="/path/to/the/bind-mounted/wiki"                            # the folder on the host, not the one inside the container
+```
+
+- **Hermes in Docker:** the bridge shells out to the `hermes` CLI. `hermes-bridge/hermes-docker.sh` forwards each call
+  with `docker exec` (set `HERMES_CONTAINER` if your container isn't named `hermes`).
+- **Wiki:** your wiki must be reachable from the host, e.g. a bind-mounted data folder. Dashboard edits keep a note's existing
+  frontmatter, and the previous version of every edited note is saved to `<wiki>/.hermy-backups/`.
+  `Logs/` and `index.md` aren't mirrored (`HERMES_WIKI_SKIP`). Set `HERMES_WIKI_GIT=1` to commit each dashboard edit.
+- **Obsidian vault:** if `HERMES_WIKI` is inside a vault (a folder containing `.obsidian`), the dashboard detects it and
+  builds `obsidian://` links. Edits made in Obsidian show up here within ~30s. `HERMES_WIKI_MODE` controls what the dashboard may write:
+  - `edit` (default): edit notes in place; existing frontmatter is merged and the old version is backed up.
+  - `capture`: compiled notes are read-only. **Add source** saves a new note to `HERMES_RAW_DIR` (default `<vault>/Raw/Sources`,
+    in the vault's own source format, never overwriting anything) for your ingest to compile. Use this for vaults with a schema.
+  - `readonly`: the dashboard never writes to the vault.
+  Don't enable `HERMES_WIKI_GIT` for a vault that already has uncommitted work.
+- **Friday's voice** (optional, `npm run tts:up`): starts [Kokoro-82M](https://github.com/remsky/Kokoro-FastAPI) (Apache-2.0) in Docker on
+  `127.0.0.1:8880` (first run downloads ~1.4 GB, ~4.5 GB on disk). The dashboard proxies to it, so nothing about it is exposed. Without it,
+  Friday falls back to your browser's built-in voice. Choose a voice with `FRIDAY_TTS_VOICE` (British female: `bf_emma`, `bf_isabella`,
+  `bf_alice`, `bf_lily`; British male: `bm_george`, `bm_lewis`, `bm_daniel`). Any OpenAI-compatible `/v1/audio/speech` server works via
+  `FRIDAY_TTS_URL`. Note: Docker on macOS can't use the Apple GPU, so synthesis runs at roughly real time; keep replies short.
+- **Friday's chat** runs on its own fast lane in the bridge (`hermes chat --continue <session>`), not behind cron work. Each turn is one Hermes
+  agent run; how long that takes depends entirely on the model behind it and grows with the conversation's length (a small local model can
+  answer in seconds, a large remote one can take a couple of minutes, more as the session's history grows). The bridge gives a turn up to
+  `FRIDAY_TIMEOUT_MS` (default 5 min) before giving up — raise it for a slower model, or set `FRIDAY_MODEL` to use a faster one just for chat.
+- **The dev server skips login.** That's why `npm run dev` listens on `127.0.0.1` only. To expose it anywhere else, use the
+  production build (`npm run build && npm start`) with Google login instead.
+- **The daily brief** is generated once per local day after `BRIEF_HOUR`, by the bridge (a real Hermes run). Restarting the bridge
+  won't regenerate it.
 
 ---
 
@@ -159,8 +222,9 @@ cp .env.example .env
 ```
 
 Open `.env` and fill in at least the **required core** vars: `DATABASE_URL`,
-`POSTGRES_URL`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAILS`, and `NEXT_PUBLIC_OWNER_NAME`.
+`NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, and `ALLOWED_EMAILS`. (`INTERNAL_API_SECRET` is optional:
+it only enables machine-to-machine API calls.)
 Every variable is documented inline in [`.env.example`](./.env.example).
 
 Generate a secret with:
@@ -169,11 +233,15 @@ Generate a secret with:
 openssl rand -base64 32
 ```
 
-### 3. Create the database tables
+### 3. Create the database tables and seed your first venture
 
 ```sh
 npx prisma db push
+npm run db:seed     # adds the CandidateHub venture + playbooks (safe to re-run)
 ```
+
+> Use a fresh database. This schema dropped the old content-creator tables, so
+> `db push` against an older Hermy HQ database will ask to delete them.
 
 ### 4. Run locally
 
@@ -196,7 +264,7 @@ Then:
 
 1. Add **every** env var from your `.env` in **Project → Settings → Environment
    Variables**.
-2. Set `NEXTAUTH_URL` and `NEXT_PUBLIC_BASE_URL` to your production URL.
+2. Set `NEXTAUTH_URL` to your production URL.
 3. In the Google Cloud console, add the authorized redirect URI
    `https://<your-domain>/api/auth/callback/google`.
 
@@ -233,9 +301,15 @@ ONBOARDING.md   copy-paste prompt to have your Hermes install this for you
 
 Hermy HQ is designed so the agent can act, but not surprise you:
 
-- Requests that have side effects are marked `sideEffecting` and land in the
-  **Approval Inbox** as `awaiting_approval`. The bridge will not run them until you
-  approve.
+- Whether a request needs approval is decided **server-side by its `kind`**
+  (`src/lib/hermes-policy.ts`), never by the client. Cron create/edit/run/remove
+  always land in the **Approval Inbox** as `awaiting_approval`; a client can escalate
+  a request but can't skip approval. The bridge re-checks the same policy before
+  running anything, so a row inserted directly into Postgres can't skip it either.
+- Memory-wiki writes are confined to `HERMES_WIKI` (relative `.md` paths only).
+- Machine-to-machine calls use `INTERNAL_API_SECRET` via the `x-internal-secret`
+  header. It bypasses login for every API route, so keep it secret and rotate it if
+  it leaks.
 - The bridge lives on your machine and only reaches out to Postgres and the local
   `hermes` CLI — nothing inbound.
 - Login is Google OAuth gated to the emails in `ALLOWED_EMAILS`.

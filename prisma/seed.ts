@@ -1,307 +1,141 @@
-import { PrismaClient } from '@prisma/client'
-import * as fs from 'fs'
-import * as path from 'path'
+// Seeds the CandidateHub venture and its playbooks. Idempotent: safe to re-run.
+//   npm run db:seed
+// Edit playbook prompts here (or in the DB) to match your own voice and offer.
+import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient()
-const DATA_DIR = './data'
+const prisma = new PrismaClient();
 
-function readJson(filename: string): unknown {
-  const p = path.join(DATA_DIR, filename)
-  if (!fs.existsSync(p)) { console.warn(`⚠️  Missing: ${filename}`); return null }
-  return JSON.parse(fs.readFileSync(p, 'utf-8'))
-}
+const VOICE =
+  "Voice: a calm, plainspoken operator. Consent-based, low pressure, specific to the recipient, no hype, " +
+  "no buzzwords, no exclamation marks. Never invent facts about the recipient; if you are unsure, leave it out.";
 
-function safeDate(val: unknown, fallback = new Date()): Date {
-  if (!val) return fallback
-  const d = new Date(val as string)
-  return isNaN(d.getTime()) ? fallback : d
-}
+const CONTEXT =
+  "Company: {{company.name}} ({{company.website}}) — industry: {{company.industry}}; size: {{company.size}}; " +
+  "location: {{company.location}}.\n" +
+  "Contact: {{contact.name}}, {{contact.title}} ({{contact.email}}).\n" +
+  "Deal: {{deal.title}}. Notes: {{notes}}";
 
-async function seedDrafts() {
-  const raw = readJson('drafts.json') as any[]
-  if (!raw) return
-  console.log(`📝 Seeding ${raw.length} drafts...`)
+const SIGNOFF =
+  "Sign as Brad DiPaolo, founder of CandidateHub. Include a one-line sender identification and a simple opt-out line " +
+  "(reply 'no thanks' and I won't follow up) to keep it CASL-compliant.";
 
-  for (const d of raw) {
-    const feedback = d.feedback ?? {}
-    await prisma.draft.upsert({
-      where: { id: d.id },
-      update: {},
-      create: {
-        id: d.id,
-        text: d.text ?? '',
-        title: d.title ?? null,
-        model: d.model ?? null,
-        status: d.status ?? 'pending',
-        type: d.type ?? null,
-        category: d.category ?? null,
-        hookType: d.hookType ?? null,
-        feedbackRating: feedback.rating ?? null,
-        feedbackReason: feedback.reason ?? null,
-        viralScore: d.viralScore ?? undefined,
-        impressionScore: d.impressionScore ?? undefined,
-        scheduledDate: d.scheduledDate ?? null,
-        scheduledTime: d.scheduledTime ?? null,
-        visualUrl: d.visualUrl ?? null,
-        variantGroup: d.variantGroup ?? null,
-        postedAt: d.postedAt ? safeDate(d.postedAt) : null,
-        postedUrl: d.postedUrl ?? null,
-        tweetUrl: d.tweetUrl ?? null,
-        tweetId: d.tweetId ?? null,
-        metrics: d.metrics ?? undefined,
-        editHistory: d.editHistory ?? [],
-        createdAt: safeDate(d.createdAt),
-        updatedAt: safeDate(d.updatedAt),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} drafts done`)
-}
-
-async function seedIdeas() {
-  const raw = readJson('ideas.json') as any[]
-  if (!raw) return
-  console.log(`💡 Seeding ${raw.length} ideas...`)
-
-  for (const d of raw) {
-    await prisma.idea.upsert({
-      where: { id: d.id },
-      update: {},
-      create: {
-        id: d.id,
-        title: d.title ?? '',
-        description: d.description ?? null,
-        category: d.category ?? null,
-        type: d.type ?? null,
-        model: d.model ?? null,
-        status: d.status ?? null,
-        timestamp: safeDate(d.timestamp),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} ideas done`)
-}
-
-async function seedLongformScripts() {
-  const raw = readJson('longform-scripts.json') as any[]
-  if (!raw) return
-  console.log(`📄 Seeding ${raw.length} longform scripts...`)
-
-  for (const d of raw) {
-    await prisma.longformScript.upsert({
-      where: { id: d.id },
-      update: {},
-      create: {
-        id: d.id,
-        title: d.title ?? '',
-        type: d.type ?? null,
-        status: d.status ?? 'draft',
-        platform: d.platform ?? null,
-        platforms: d.platforms ?? undefined,
-        description: d.description ?? null,
-        hook: d.hook ?? null,
-        outline: d.outline ?? null,
-        fullScript: d.fullScript ?? null,
-        targetLength: d.targetLength ?? null,
-        factCheck: d.factCheck ?? undefined,
-        notes: d.notes ?? null,
-        createdAt: safeDate(d.createdAt),
-        updatedAt: safeDate(d.updatedAt),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} longform scripts done`)
-}
-
-async function seedYoutubeScripts() {
-  const raw = readJson('youtube-scripts.json') as any[]
-  if (!raw) return
-  console.log(`🎬 Seeding ${raw.length} YouTube scripts...`)
-
-  for (const d of raw) {
-    await prisma.youtubeScript.upsert({
-      where: { id: d.id },
-      update: {},
-      create: {
-        id: d.id,
-        title: d.title ?? '',
-        hook: d.hook ?? null,
-        storySetup: d.storySetup ?? null,
-        conflict: d.conflict ?? null,
-        insight: d.insight ?? null,
-        cta: d.cta ?? null,
-        caption: d.caption ?? null,
-        onScreenText: d.onScreenText ?? null,
-        hookType: d.hookType ?? null,
-        funnelStage: d.funnelStage ?? null,
-        factCheck: d.factCheck ?? undefined,
-        status: d.status ?? 'draft',
-        rejectedReason: d.rejectedReason ?? null,
-        createdAt: safeDate(d.createdAt),
-        updatedAt: safeDate(d.updatedAt),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} YouTube scripts done`)
-}
-
-async function seedYoutubeIdeas() {
-  const raw = readJson('youtube-ideas.json') as any[]
-  if (!raw) return
-  console.log(`🎯 Seeding ${raw.length} YouTube ideas...`)
-
-  // Delete and re-insert (no stable IDs in source file)
-  await prisma.youtubeIdea.deleteMany()
-  for (const d of raw) {
-    await prisma.youtubeIdea.create({
-      data: {
-        title: d.title ?? '',
-        hook: d.hook ?? null,
-        angle: d.angle ?? null,
-        hookType: d.hookType ?? null,
-        funnelStage: d.funnelStage ?? null,
-        status: d.status ?? 'pending',
-        rejectedReason: d.rejectedReason ?? null,
-        createdAt: safeDate(d.createdAt),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} YouTube ideas done`)
-}
-
-async function seedYoutubeFeedback() {
-  const raw = readJson('youtube-feedback.json') as any[]
-  if (!raw) return
-  console.log(`💬 Seeding ${raw.length} YouTube feedback...`)
-
-  await prisma.youtubeFeedback.deleteMany()
-  for (const d of raw) {
-    await prisma.youtubeFeedback.create({
-      data: {
-        title: d.title ?? '',
-        reason: d.reason ?? null,
-        type: d.type ?? null,
-        date: safeDate(d.date),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} YouTube feedback done`)
-}
-
-async function seedTweetMetrics() {
-  const raw = readJson('tweet-metrics.json') as any[]
-  if (!raw) return
-  console.log(`📊 Seeding ${raw.length} tweet metrics...`)
-
-  await prisma.tweetMetric.deleteMany()
-  for (const d of raw) {
-    await prisma.tweetMetric.create({
-      data: {
-        draftId: d.draftId ?? '',
-        tweetId: d.tweetId ?? null,
-        url: d.url ?? null,
-        postedAt: d.postedAt ? safeDate(d.postedAt) : null,
-        checkpoints: d.checkpoints ?? undefined,
-        createdAt: safeDate(d.createdAt),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} tweet metrics done`)
-}
-
-async function seedAgentState() {
-  const raw = readJson('agent-state.json') as any[]
-  if (!raw) return
-  console.log(`🤖 Seeding ${raw.length} agent states...`)
-
-  for (const d of raw) {
-    await prisma.agentState.upsert({
-      where: { id: d.id },
-      update: {
-        name: d.name,
-        emoji: d.emoji ?? null,
-        role: d.role ?? null,
-        status: d.status ?? 'offline',
-        lastActive: d.lastActive ? safeDate(d.lastActive) : null,
-        tasksCompleted: d.tasksCompleted ?? 0,
-        totalCost: d.totalCost ?? 0,
-        currentTask: d.currentTask ?? null,
-        recentActivity: d.recentActivity ?? [],
-        updatedAt: new Date(),
-      },
-      create: {
-        id: d.id,
-        name: d.name,
-        emoji: d.emoji ?? null,
-        role: d.role ?? null,
-        status: d.status ?? 'offline',
-        lastActive: d.lastActive ? safeDate(d.lastActive) : null,
-        tasksCompleted: d.tasksCompleted ?? 0,
-        totalCost: d.totalCost ?? 0,
-        currentTask: d.currentTask ?? null,
-        recentActivity: d.recentActivity ?? [],
-        updatedAt: new Date(),
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} agent states done`)
-}
-
-async function seedContentCalendar() {
-  const raw = readJson('content-calendar.json') as any
-  if (!raw) return
-  // File is { week: "...", days: [...] }
-  const week = raw.week
-  if (!week) { console.warn('⚠️  content-calendar.json missing week field'); return }
-  console.log(`📅 Seeding content calendar (week ${week})...`)
-
-  await prisma.contentCalendar.upsert({
-    where: { week },
-    update: { data: raw },
-    create: { week, data: raw },
-  })
-  console.log(`  ✅ Calendar done`)
-}
-
-async function seedContentRequests() {
-  const raw = readJson('content-requests.json') as any[]
-  if (!raw || !raw.length) return
-  console.log(`📬 Seeding ${raw.length} content requests...`)
-
-  for (const d of raw) {
-    await prisma.contentRequest.upsert({
-      where: { id: d.id },
-      update: {},
-      create: {
-        id: d.id,
-        prompt: d.prompt ?? '',
-        status: d.status ?? 'pending',
-        resultDraftIds: d.resultDraftIds ?? undefined,
-        createdAt: safeDate(d.createdAt),
-        completedAt: d.completedAt ? safeDate(d.completedAt) : null,
-      },
-    })
-  }
-  console.log(`  ✅ ${raw.length} content requests done`)
-}
+const playbooks = [
+  {
+    key: "research-company",
+    name: "Research company",
+    description: "Recruiting pain points and an outreach angle. Internal only.",
+    needsInput: false,
+    promptTemplate:
+      "Research this prospect for CandidateHub (recruiting/ATS software for mid-market employers in Atlantic Canada).\n" +
+      CONTEXT +
+      "\n\nFind and summarize: what they do, roughly how many people they employ, current hiring signals or open roles, " +
+      "who runs HR / talent acquisition, and any recent news. Then list 2-3 likely recruiting pain points and ONE suggested " +
+      "outreach angle. Be concise (bullets). Mark anything you could not verify as 'unverified'. Do not contact anyone.",
+  },
+  {
+    key: "draft-intro-email",
+    name: "Draft intro email",
+    description: "Cold intro to book a demo. Draft only — you review and send.",
+    needsInput: false,
+    promptTemplate:
+      "Draft a short cold intro email to {{contact.name}} ({{contact.title}}) at {{company.name}}, with the goal of booking a " +
+      "15-minute CandidateHub demo.\n" + CONTEXT + "\n\n" + VOICE + "\n" +
+      "Under 120 words, one clear low-pressure ask. Output the subject line and the body only. " + SIGNOFF + " Do NOT send anything.",
+  },
+  {
+    key: "draft-linkedin-note",
+    name: "Draft LinkedIn note",
+    description: "Connection request note (300 characters max). Draft only.",
+    needsInput: false,
+    promptTemplate:
+      "Draft a LinkedIn connection request note to {{contact.name}} ({{contact.title}}) at {{company.name}}.\n" +
+      CONTEXT + "\n\n" + VOICE + "\nMaximum 300 characters. No pitch, no link. Output the note only. Do NOT send anything.",
+  },
+  {
+    key: "draft-followup",
+    name: "Draft follow-up",
+    description: "Follow-up when a thread has gone quiet. Tell Hermes what happened.",
+    needsInput: true,
+    promptTemplate:
+      "Draft a brief follow-up to {{contact.name}} ({{contact.title}}) at {{company.name}}.\n" + CONTEXT +
+      "\nWhat happened so far: {{input}}\n\n" + VOICE + "\nUnder 80 words, add something useful rather than 'just checking in'. " +
+      "Output the subject line (or 'Re:' if replying) and the body only. " + SIGNOFF + " Do NOT send anything.",
+  },
+  {
+    key: "draft-reply",
+    name: "Draft reply",
+    description: "Reply to something they wrote back. Paste their message.",
+    needsInput: true,
+    promptTemplate:
+      "Draft a reply to {{contact.name}} ({{contact.title}}) at {{company.name}}.\n" + CONTEXT +
+      "\nTheir reply, verbatim:\n\"\"\"\n{{input}}\n\"\"\"\n\n" + VOICE + "\n" +
+      "Answer what they actually asked. If they are interested, propose two specific 15-minute slots next week (leave the times " +
+      "as [TIME 1] / [TIME 2] for me to fill in). If they said no or asked to stop, thank them briefly and confirm you won't follow up. " +
+      "Under 100 words. Output the subject line ('Re: …') and the body only. " + SIGNOFF + " Do NOT send anything.",
+  },
+  {
+    key: "prep-demo",
+    name: "Prep demo",
+    description: "One-page brief before a demo call. Internal only.",
+    needsInput: false,
+    promptTemplate:
+      "Prepare a one-page demo brief for a CandidateHub demo with {{contact.name}} ({{contact.title}}) at {{company.name}}.\n" +
+      CONTEXT + "\n\nInclude: who they are, what they probably struggle with in recruiting, 5 discovery questions, " +
+      "the 2-3 CandidateHub features most relevant to them, likely objections with short answers, and a suggested next step " +
+      "to propose at the end. Mark anything you could not verify as 'unverified'.",
+  },
+];
 
 async function main() {
-  console.log('🌱 Starting Max HQ data seed...\n')
-
-  await seedAgentState()
-  await seedDrafts()
-  await seedIdeas()
-  await seedLongformScripts()
-  await seedYoutubeScripts()
-  await seedYoutubeIdeas()
-  await seedYoutubeFeedback()
-  await seedTweetMetrics()
-  await seedContentCalendar()
-  await seedContentRequests()
-
-  console.log('\n✅ All done! Max HQ database is fully seeded.')
+  await prisma.venture.upsert({
+    where: { key: "candidatehub" },
+    update: {},
+    create: {
+      key: "candidatehub",
+      name: "CandidateHub",
+      stages: ["prospect", "contacted", "replied", "demo_booked", "demo_done", "trial"],
+      wonStage: "won",
+      lostStage: "lost",
+      recurring: true, // deal value = monthly subscription
+      sortOrder: 0,
+    },
+  });
+  await prisma.venture.upsert({
+    where: { key: "ai-consulting" },
+    update: {},
+    create: {
+      key: "ai-consulting",
+      name: "AI Consulting",
+      stages: ["prospect", "contacted", "replied", "discovery_booked", "proposal_sent"],
+      wonStage: "won",
+      lostStage: "lost",
+      recurring: false, // most engagements are one-time; toggle per deal for retainers
+      sortOrder: 1,
+    },
+  });
+  await prisma.venture.upsert({
+    where: { key: "web-design-marketing" },
+    update: {},
+    create: {
+      key: "web-design-marketing",
+      name: "Web Design & Marketing",
+      stages: ["prospect", "contacted", "replied", "scoped", "proposal_sent"],
+      wonStage: "won",
+      lostStage: "lost",
+      recurring: false, // project fees are one-time; toggle per deal for hosting/maintenance retainers
+      sortOrder: 2,
+    },
+  });
+  let i = 0;
+  for (const p of playbooks) {
+    await prisma.playbook.upsert({
+      where: { key: p.key },
+      // keep any edits you've made in the DB; only fill in what's missing
+      update: {},
+      create: { ...p, ventureKey: "candidatehub", kind: "oneshot", sortOrder: i++ },
+    });
+  }
+  console.log(`Seeded venture "candidatehub" with ${playbooks.length} playbooks.`);
 }
 
-main()
-  .catch((e) => { console.error('❌ Seed failed:', e); process.exit(1) })
-  .finally(() => prisma.$disconnect())
+main().finally(() => prisma.$disconnect());

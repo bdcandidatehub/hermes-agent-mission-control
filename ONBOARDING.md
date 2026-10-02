@@ -59,7 +59,7 @@ cp .env.example .env
 Open `.env` and go through the **Required · Core** group with the operator. For each
 of these, ask them to paste the real value, then write it into `.env` for them —
 never invent one:
-- `DATABASE_URL` and `POSTGRES_URL` (usually the same Postgres URL)
+- `DATABASE_URL` (the Postgres URL)
 - `NEXTAUTH_URL` — use `http://localhost:3000` for now
 - `NEXTAUTH_SECRET` — you MAY generate this one locally with
   `openssl rand -base64 32` (it is a random secret, not an account credential),
@@ -67,19 +67,21 @@ never invent one:
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` — ask the operator to paste from
   their Google OAuth app
 - `ALLOWED_EMAILS` — the Google email(s) allowed to sign in
-- `NEXT_PUBLIC_OWNER_NAME` and `NEXT_PUBLIC_BASE_URL`
+- `INTERNAL_API_SECRET` (optional, enables machine-to-machine API calls; leave unset if unsure) — generate with `openssl rand -hex 32`
 
 Then set the **Hermes / bridge** group: `HERMES_BOARD`, `HERMES_BIN`, `HERMES_WIKI`,
-`BRIEF_HOUR`, and generate `INTERNAL_API_SECRET` and `CRON_SECRET`
-(`openssl rand -hex 32` each). Leave the **Optional** groups blank unless the
-operator wants those features now.
+and `BRIEF_HOUR`. Leave the **Optional** groups blank unless the operator wants those
+features now.
 
 ### Step 4 — Create the database tables
 Push the Prisma schema to their Postgres:
 ```sh
 npx prisma db push
+npm run db:seed
 ```
-Confirm it reports the schema is in sync. If it fails, the `DATABASE_URL` is almost
+`db:seed` adds the CandidateHub venture and its playbooks (safe to re-run). Ask the
+operator whether they want to edit `prisma/seed.ts` (their own offer, voice, stages)
+before seeding. If they already have a prospect list, mention the **Import CSV** button on the Pipeline page. Confirm `db push` reports the schema is in sync. If it fails, the `DATABASE_URL` is almost
 always the cause — recheck it with the operator.
 
 ### Step 5 — Run locally to verify
@@ -101,7 +103,7 @@ Then have the operator:
 1. Add **every** variable from `.env` in Vercel → Project → Settings → Environment
    Variables. Ask them to paste values into Vercel themselves (or read them back so
    you can guide) — do not fabricate any.
-2. Update `NEXTAUTH_URL` and `NEXT_PUBLIC_BASE_URL` to the production URL, both
+2. Update `NEXTAUTH_URL` to the production URL, both
    locally and in Vercel.
 3. In the Google Cloud console, add the authorized redirect URI
    `https://<their-domain>/api/auth/callback/google`.

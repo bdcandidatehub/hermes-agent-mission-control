@@ -10,10 +10,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Skip auth for NextAuth routes, assets, login, and public embeddable charts
+  // Skip auth for NextAuth routes, assets, and the login page
   if (
     pathname.startsWith('/api/auth/') ||
-    pathname.startsWith('/api/garden') ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/favicon.ico') ||
     pathname === '/login'

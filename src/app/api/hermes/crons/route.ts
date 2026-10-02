@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { initialStatus, MAX_PROMPT_CHARS, safeCliArg, tierFor } from "@/lib/hermes-policy";
 
 export type CronJob = {
   id: string;
@@ -57,22 +58,35 @@ export async function GET() {
   return NextResponse.json({ jobs, syncedAt: data.syncedAt ?? null });
 }
 
-// POST { op: "create"|"pause"|"resume"|"run"|"remove"|"edit", ... } → queue a cron mutation for the bridge
+// POST { op: "create"|"pause"|"resume"|"run"|"remove"|"edit", ... } → queue a cron mutation for the bridge.
+// Approval tier comes from lib/hermes-policy.ts, not from the client.
 export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}));
   const op = (b.op || "").toString();
-  if (!["create", "pause", "resume", "run", "remove", "edit"].includes(op))
-    return NextResponse.json({ error: "bad op" }, { status: 400 });
-  const label = op === "create" ? `Schedule: ${b.schedule || "?"} — ${b.prompt || b.name || ""}` : `Cron ${op}: ${b.name || b.id || ""}`;
-  const sideEffecting = op === "create" || op === "edit" || op === "remove";
+  const kind = `cron.${op}`;
+  if (!tierFor(kind)) return NextResponse.json({ error: "bad op" }, { status: 400 });
+
+  const args = {
+    schedule: safeCliArg(b.schedule),
+    prompt: safeCliArg(b.prompt, MAX_PROMPT_CHARS),
+    name: safeCliArg(b.name),
+    id: safeCliArg(b.id),
+  };
+  if (op === "create" && (!args.schedule || !(args.prompt || args.name)))
+    return NextResponse.json({ error: "schedule and prompt required" }, { status: 400 });
+  if (op !== "create" && !(args.id || args.name))
+    return NextResponse.json({ error: "id or name required" }, { status: 400 });
+
+  const label = op === "create" ? `Schedule: ${args.schedule} — ${args.prompt || args.name}` : `Cron ${op}: ${args.name || args.id}`;
+  const status = initialStatus(kind, false)!;
   const row = await prisma.agentRequest.create({
     data: {
       origin: "web",
-      kind: `cron.${op}`,
+      kind,
       title: label.slice(0, 200),
-      prompt: JSON.stringify(b),
-      sideEffecting,
-      status: sideEffecting ? "awaiting_approval" : "queued",
+      prompt: JSON.stringify(args),
+      sideEffecting: status === "awaiting_approval",
+      status,
     },
   });
   return NextResponse.json({ request: row });

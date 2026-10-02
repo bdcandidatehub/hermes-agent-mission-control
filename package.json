@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "prisma generate && next build",
     "postinstall": "prisma generate",
     "start": "next start",
@@ -11,28 +11,23 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "db:seed": "npx tsx prisma/seed.ts"
+    "db:seed": "npx tsx prisma/seed.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose stop postgres",
+    "tts:up": "docker compose --profile voice up -d --wait tts",
+    "tts:down": "docker compose --profile voice stop tts",
+    "bridge": "node --env-file=.env hermes-bridge/bridge.mjs"
   },
   "dependencies": {
-    "@auth/prisma-adapter": "^1.6.0",
     "@prisma/client": "^6.19.2",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/formidable": "^3.4.6",
-    "better-sqlite3": "^12.11.1",
-    "drizzle-orm": "^0.45.2",
-    "formidable": "^3.5.4",
-    "googleapis": "^171.4.0",
-    "grammy": "^1.44.0",
     "lucide-react": "^0.564.0",
     "next": "16.1.6",
     "next-auth": "^4.24.13",
     "pg": "^8.19.0",
     "prisma": "^6.19.2",
     "react": "19.2.3",
-    "react-dnd": "^16.0.1",
-    "react-dnd-html5-backend": "^16.0.1",
-    "react-dom": "19.2.3",
-    "recharts": "^3.7.0"
+    "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
