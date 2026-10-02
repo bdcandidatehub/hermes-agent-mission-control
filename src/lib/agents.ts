@@ -8,15 +8,15 @@ export const MAX_AGENT_MESSAGE_CHARS = 2000;
 export const AGENT_DIRECTORY: Record<string, { name: string; emoji: string; role: string }> = {
   default: { name: "Friday", emoji: "✨", role: "Chief of Staff · Orchestrator" },
   mason: { name: "Mason", emoji: "💼", role: "Sales · Outreach & Email" },
-  builder: { name: "Tony", emoji: "🛠️", role: "Engineering · Product Builder" },
+  tony: { name: "Tony", emoji: "🛠️", role: "Engineering · Product Builder" },
   paula: { name: "Paula", emoji: "🎨", role: "Design · Creative Director" },
-  video: { name: "Video", emoji: "🎬", role: "Video Creation & Editing" },
-  sarah: { name: "Sarah", emoji: "🌸", role: "Specialist" },
+  video: { name: "Video", emoji: "🎬", role: "Video Creation" },
+  sarah: { name: "Sarah", emoji: "✂️", role: "Video Editing" },
   "email-calendar": { name: "Email & Calendar", emoji: "📅", role: "Inbox & Schedule Assistant" },
 };
 
-// Friday's delegation instructions call the engineering agent "tony"; the Hermes profile is named "builder".
-const ASSIGNEE_ALIASES: Record<string, string> = { tony: "builder" };
+// Tony's Hermes profile used to be called "builder"; tasks assigned under the old name still count as his.
+const ASSIGNEE_ALIASES: Record<string, string> = { builder: "tony" };
 
 const WORKING = new Set(["running", "in_progress", "claimed", "started"]);
 const FINISHED = new Set(["done", "completed", "archived", "cancelled", "canceled"]);

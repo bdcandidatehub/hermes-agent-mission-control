@@ -67,30 +67,31 @@ describe("buildRoster", () => {
   const mirrored = [
     { id: "default", name: "Friday", isDefault: true, model: "nvidia/x", gateway: "running" },
     { id: "mason", name: "mason", isDefault: false, model: "openai/gpt-5.6-sol", gateway: "stopped" },
-    { id: "builder", name: "builder", isDefault: false, model: "q", gateway: "stopped" },
+    { id: "tony", name: "tony", isDefault: false, model: "q", gateway: "stopped" },
     { id: "newbie", name: "newbie", isDefault: false, model: "z", gateway: "stopped" },
   ];
   const tasks = [
     { id: "1", title: "Check inbox", assignee: "mason", status: "done", result: "ok", updatedAt: new Date("2026-10-01T10:00:00Z") },
     { id: "2", title: "Scan deals", assignee: "mason", status: "running", result: null, updatedAt: new Date("2026-10-02T10:00:00Z") },
     { id: "3", title: "Fix bug", assignee: "tony", status: "done", result: null, updatedAt: new Date("2026-10-02T09:00:00Z") },
+    { id: "5", title: "Old-name task", assignee: "builder", status: "done", result: null, updatedAt: new Date("2026-09-30T09:00:00Z") },
     { id: "4", title: "Stuck", assignee: "mason", status: "blocked", result: null, updatedAt: new Date("2026-10-02T08:00:00Z") },
   ];
   const roster = buildRoster(mirrored, tasks);
   const by = (id: string) => roster.find((a) => a.id === id)!;
 
   it("orders Friday first, then known agents, then unknown profiles", () => {
-    assert.deepEqual(roster.map((a) => a.id), ["default", "mason", "builder", "newbie"]);
+    assert.deepEqual(roster.map((a) => a.id), ["default", "mason", "tony", "newbie"]);
   });
   it("uses the directory for names/roles and a safe fallback for new profiles", () => {
     assert.equal(by("mason").name, AGENT_DIRECTORY.mason.name);
-    assert.equal(by("builder").name, "Tony");
+    assert.equal(by("tony").name, "Tony");
     assert.equal(by("newbie").name, "Newbie");
     assert.equal(by("newbie").role, "Hermes profile");
   });
-  it("counts tasks, treats the tony assignee as the builder profile, and flags working", () => {
+  it("counts tasks, still credits the old \"builder\" assignee to Tony, and flags working", () => {
     assert.deepEqual([by("mason").tasksDone, by("mason").tasksOpen, by("mason").status], [1, 2, "working"]);
-    assert.deepEqual([by("builder").tasksDone, by("builder").status], [1, "idle"]);
+    assert.deepEqual([by("tony").tasksDone, by("tony").status], [2, "idle"]);
     assert.equal(by("mason").currentTask, "Scan deals");
   });
   it("lists newest activity first", () => {
