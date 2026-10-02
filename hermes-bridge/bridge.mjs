@@ -25,6 +25,7 @@ import path from "node:path";
 import os from "node:os";
 import { parseStatus } from "./status.mjs";
 import { composeQuery, parseChatOutput } from "./friday.mjs";
+import { composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "./agents.mjs";
 import { shouldGenerateBrief } from "./brief.mjs";
 import { deriveTitle, extractWikilinks, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
 import { detectVault, writeSourceNote } from "./vault.mjs";
@@ -51,6 +52,12 @@ const WIKI_MODE = ["edit", "capture", "readonly"].includes(process.env.HERMES_WI
 const FRIDAY_SESSION = process.env.FRIDAY_SESSION || "hermy-dashboard";
 const FRIDAY_MODEL = process.env.FRIDAY_MODEL || ""; // optional: a faster model just for chat (passed as `hermes chat -m`)
 const FRIDAY_TIMEOUT_MS = Number(process.env.FRIDAY_TIMEOUT_MS || 300000); // a 120s default proved too tight for a large/remote model on a growing session
+// Agents page: direct chat with any Hermes profile (`hermes -p <profile> chat`), one persistent session per agent.
+// HERMES_DATA_DIR is Hermes' home on this machine (holds config.yaml and profiles/<name>/config.yaml); it is only used
+// to show each agent's full model name and is optional.
+const HERMES_DATA_DIR = process.env.HERMES_DATA_DIR || "";
+const AGENT_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS || FRIDAY_TIMEOUT_MS);
+const AGENT_MIRROR_MS = 120_000; // `hermes profile list` is slow on a small box and the roster rarely changes
 const TAG_TYPES = new Set(["concept", "entity", "topic", "project", "log"]);
 const VAULT = detectVault(WIKI_DIR); // enclosing Obsidian vault, if any
 const RAW_DIR = process.env.HERMES_RAW_DIR || (VAULT && fs.existsSync(path.join(VAULT.root, "Raw", "Sources")) ? path.join(VAULT.root, "Raw", "Sources") : null);
@@ -89,7 +96,7 @@ pool.on("error", (e) => log("pg pool error (connection recovered automatically o
  *   approve → runs ONLY when status is approved
  * Unknown kinds never run. */
 const KIND_TIERS = {
-  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto", "source.add": "auto", "friday.chat": "auto",
+  oneshot: "auto", chat: "auto", kanban: "auto", "briefing.generate": "auto", "memory.write": "auto", "source.add": "auto", "friday.chat": "auto", "agent.chat": "auto",
   "cron.create": "approve", "cron.edit": "approve", "cron.run": "approve", "cron.remove": "approve",
   "cron.pause": "auto", "cron.resume": "auto",
 };
@@ -195,6 +202,26 @@ async function mirrorWikiConfig() {
   });
 }
 
+let agentRoster = []; // profile ids from the last successful mirror; chat requests are checked against it
+let agentsMirroredAt = 0;
+async function mirrorAgents() {
+  if (Date.now() - agentsMirroredAt < AGENT_MIRROR_MS && agentRoster.length) return;
+  const list = parseProfileList(await hermes(["profile", "list"], { timeout: 60000 }));
+  if (!list.length) { log("profile list returned no profiles"); return; }
+  if (HERMES_DATA_DIR) {
+    for (const a of list) {
+      try {
+        const cfg = path.join(HERMES_DATA_DIR, a.isDefault ? "" : path.join("profiles", a.id), "config.yaml");
+        const full = modelFromConfig(fs.readFileSync(cfg, "utf8"));
+        if (full) a.model = full;
+      } catch { /* keep the table's (possibly truncated) model */ }
+    }
+  }
+  agentRoster = list.map((a) => a.id);
+  agentsMirroredAt = Date.now();
+  await setStore("hermes-agents", { agents: list, syncedAt: new Date().toISOString() });
+}
+
 async function mirrorHealth() {
   let online = false, gateway = "unknown", detail = "";
   try {
@@ -274,7 +301,7 @@ async function maybeDailyBrief() {
 /* ─────────────── PUSH: run website requests via Hermes ─────────────── */
 async function runRequest(r) {
   await q(`UPDATE "AgentRequest" SET status='running', "startedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id]);
-  const quiet = r.kind === "friday.chat"; // chat turns stay out of the activity feed
+  const quiet = r.kind === "friday.chat" || r.kind === "agent.chat"; // chat turns stay out of the activity feed
   if (!quiet) await emit("run", `Started: ${r.title}`, { level: "info", meta: { requestId: r.id, kind: r.kind } });
   let timeoutMs = null; // the timeout passed to whichever hermes() call is in flight, so a kill can be reported honestly
   try {
@@ -312,6 +339,16 @@ async function runRequest(r) {
       timeoutMs = FRIDAY_TIMEOUT_MS;
       result = parseChatOutput(await hermes(args, { timeout: timeoutMs }));
       if (!result) throw new Error("Friday returned nothing");
+    } else if (r.kind === "agent.chat") {
+      const t = JSON.parse(r.prompt || "{}");
+      if (!t.message) throw new Error("empty message");
+      if (!validProfileId(t.profile)) throw new Error("invalid agent");
+      if (!agentRoster.includes(t.profile)) await mirrorAgents();
+      if (!agentRoster.includes(t.profile)) throw new Error(`unknown agent: ${t.profile}`);
+      const args = ["-p", t.profile, "chat", "-Q", "-q", composeAgentQuery({ message: t.message }), "--continue", `hermy-${t.profile}`, "--create-if-missing"];
+      timeoutMs = AGENT_TIMEOUT_MS;
+      result = parseChatOutput(await hermes(args, { timeout: timeoutMs }));
+      if (!result) throw new Error(`${t.profile} returned nothing`);
     } else if (r.kind === "source.add") {
       if (WIKI_MODE === "readonly") throw new Error("The dashboard is read-only for this vault (HERMES_WIKI_MODE=readonly).");
       if (!RAW_DIR) throw new Error("No sources folder configured (set HERMES_RAW_DIR).");
@@ -348,7 +385,7 @@ async function runRequest(r) {
 
 async function processQueue() {
   const { rows } = await q(
-    `SELECT * FROM "AgentRequest" WHERE status IN ('queued','approved') AND kind <> 'friday.chat' ORDER BY "createdAt" ASC LIMIT 20`
+    `SELECT * FROM "AgentRequest" WHERE status IN ('queued','approved') AND kind NOT IN ('friday.chat','agent.chat') ORDER BY "createdAt" ASC LIMIT 20`
   );
   let ran = 0;
   for (const r of rows) {
@@ -373,11 +410,18 @@ async function processFriday() {
   if (rows[0] && canRun(rows[0])) await runRequest(rows[0]);
 }
 
+// Agent chats get their own lane too, one at a time (a small server can't run several model turns at once).
+async function processAgentChat() {
+  const { rows } = await q(`SELECT * FROM "AgentRequest" WHERE kind='agent.chat' AND status IN ('queued','approved') ORDER BY "createdAt" ASC LIMIT 1`);
+  if (rows[0] && canRun(rows[0])) await runRequest(rows[0]);
+}
+
 /* ─────────────── loops ─────────────── */
 async function mirrorTick() {
   try { await mirrorKanban(); } catch (e) { log("mirrorKanban err", e.message); }
   try { await mirrorCrons(); } catch (e) { log("mirrorCrons err", e.message); }
   try { await mirrorHealth(); } catch (e) { log("mirrorHealth err", e.message); }
+  try { await mirrorAgents(); } catch (e) { log("mirrorAgents err", e.message.split("\n")[0]); }
   try { await mirrorWikiConfig(); } catch (e) { log("mirrorWikiConfig err", e.message); }
   try { await mirrorWiki(); } catch (e) { log("mirrorWiki err", e.message); }
   try { await mirrorCost(); } catch (e) { log("mirrorCost err", e.message); }
@@ -405,6 +449,7 @@ async function main() {
   };
   loop("queue", POLL_MS, processQueue);
   loop("friday", 700, processFriday);
+  loop("agents", 900, processAgentChat);
   loop("mirror", MIRROR_MS, mirrorTick);
   loop("brief", 60_000, maybeDailyBrief);
 }

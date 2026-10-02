@@ -8,6 +8,7 @@ import {
   Kanban,
   Cpu,
   BookOpen,
+  Users,
   Menu,
   X,
 } from "lucide-react";
@@ -23,6 +24,7 @@ const navGroups = [
   {
     name: "Hermes",
     items: [
+      { href: "/agents", label: "Agents", icon: Users },
       { href: "/hermes", label: "Control", icon: Cpu },
       { href: "/memory-wiki", label: "Memory Wiki", icon: BookOpen },
     ],
@@ -33,6 +35,7 @@ const navGroups = [
 const mobileTabsRaw = [
   { href: "/", label: "Today", icon: Home },
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
+  { href: "/agents", label: "Agents", icon: Users },
   { href: "/hermes", label: "Hermes", icon: Cpu },
   { href: "/memory-wiki", label: "Memory", icon: BookOpen },
 ];
