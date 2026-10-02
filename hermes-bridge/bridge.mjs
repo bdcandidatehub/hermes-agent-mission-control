@@ -73,9 +73,10 @@ if (DB_URL.startsWith("prisma://") || DB_URL.startsWith("prisma+")) {
 }
 // Cloud Postgres (Prisma Postgres/Neon/Supabase/RDS) needs SSL; localhost doesn't.
 const isLocal = /@(localhost|127\.0\.0\.1)/.test(DB_URL);
+// PGSSL_DISABLE=1 turns TLS off for a database on a private Docker network (e.g. Coolify's internal Postgres).
 // Verify the server certificate by default. Only set PGSSL_INSECURE=1 if your provider uses a
 // self-signed chain you can't add to the trust store (not recommended).
-const sslOpt = isLocal ? undefined : { rejectUnauthorized: process.env.PGSSL_INSECURE !== "1" };
+const sslOpt = isLocal || process.env.PGSSL_DISABLE === "1" ? undefined : { rejectUnauthorized: process.env.PGSSL_INSECURE !== "1" };
 const pool = new pg.Pool({ connectionString: DB_URL, max: 4, ssl: sslOpt });
 // node-postgres emits 'error' on an idle client whose connection drops (a Postgres restart, a brief network
 // blip). With no listener, Node treats that as an unhandled 'error' event and CRASHES THE WHOLE PROCESS —
