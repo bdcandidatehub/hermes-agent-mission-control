@@ -90,7 +90,8 @@ export async function POST(req: Request) {
     data: {
       ventureKey: venture.key, companyId, contactId, stage,
       title: str(b.title) ?? company.name,
-      valueCents, nextAction: str(b.nextAction), nextActionDue: due, notes: str(b.notes, 5000),
+      valueCents, recurring: typeof b.recurring === "boolean" ? b.recurring : venture.recurring,
+      nextAction: str(b.nextAction), nextActionDue: due, notes: str(b.notes, 5000),
     },
     include: { company: { select: { id: true, name: true } }, contact: { select: { id: true, name: true, title: true } } },
   });

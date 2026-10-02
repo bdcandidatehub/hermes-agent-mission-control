@@ -90,7 +90,7 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!dry) await prisma.deal.create({ data: { ventureKey: venture.key, companyId, contactId, title: row.company, stage } });
+    if (!dry) await prisma.deal.create({ data: { ventureKey: venture.key, companyId, contactId, title: row.company, stage, recurring: venture.recurring } });
     out.dealsCreated++;
     hasDeal.add(companyId);
   }

@@ -9,7 +9,7 @@ import { ImportModal } from "@/components/import-modal";
 import { CONSENT_BASES, fmtMoney, stageLabel } from "@/lib/crm";
 
 interface Deal {
-  id: string; title: string; stage: string; valueCents: number; nextAction: string | null; nextActionDue: string | null;
+  id: string; title: string; stage: string; valueCents: number; recurring: boolean; nextAction: string | null; nextActionDue: string | null;
   company: { id: string; name: string }; contact: { id: string; name: string; title: string | null } | null;
 }
 
@@ -31,6 +31,7 @@ function NewDealModal({ venture, onClose, onCreated }: { venture: VentureLite; o
     contactName: "", contactEmail: "", contactTitle: "", consent: "none",
     value: "", nextAction: "", nextActionDue: "",
   });
+  const [recurring, setRecurring] = useState(venture.recurring);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
@@ -44,7 +45,7 @@ function NewDealModal({ venture, onClose, onCreated }: { venture: VentureLite; o
         ventureKey: venture.key,
         company: { name: f.company, website: f.website, industry: f.industry, size: f.size, location: f.location },
         contact: f.contactName ? { name: f.contactName, email: f.contactEmail, title: f.contactTitle, consentBasis: f.consent } : undefined,
-        value: f.value || undefined, nextAction: f.nextAction, nextActionDue: f.nextActionDue || null,
+        value: f.value || undefined, recurring, nextAction: f.nextAction, nextActionDue: f.nextActionDue || null,
       }),
     });
     const j = await r.json().catch(() => ({}));
@@ -79,9 +80,13 @@ function NewDealModal({ venture, onClose, onCreated }: { venture: VentureLite; o
         </div>
         <div className="rule" />
         <div className="grid grid-cols-2 gap-3">
-          <label className="block"><span className="eyebrow">{venture.recurring ? "Monthly value (CAD)" : "Value (CAD)"}</span><input className={`${INPUT} mt-1`} inputMode="decimal" value={f.value} onChange={set("value")} placeholder="249" /></label>
+          <label className="block"><span className="eyebrow">{recurring ? "Monthly value (CAD)" : "Value (CAD)"}</span><input className={`${INPUT} mt-1`} inputMode="decimal" value={f.value} onChange={set("value")} placeholder="249" /></label>
           <label className="block"><span className="eyebrow">Next action due</span><input type="date" className={`${INPUT} mt-1`} value={f.nextActionDue} onChange={set("nextActionDue")} /></label>
         </div>
+        <label className="flex items-center gap-2 text-[13px] text-[var(--text-2)]">
+          <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
+          Recurring — counts toward MRR
+        </label>
         <label className="block"><span className="eyebrow">Next action</span><input className={`${INPUT} mt-1`} value={f.nextAction} onChange={set("nextAction")} placeholder="Send intro email" /></label>
         {err && <p className="text-[13px] text-[var(--down)]" role="alert">{err}</p>}
         <div className="flex justify-end gap-2">
@@ -157,7 +162,7 @@ function Board() {
         }
         action={<div className="flex gap-2"><Button onClick={() => setImporting(true)}><Upload className="w-4 h-4" />Import CSV</Button><Button variant="primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New deal</Button></div>}
       />
-      <p className="-mt-3 text-[12.5px] text-[var(--text-3)] num">{deals ? `${deals.length} deals · ${fmtMoney(totalOpen)}${venture.recurring ? "/mo" : ""} open` : "Loading…"}</p>
+      <p className="-mt-3 text-[12.5px] text-[var(--text-3)] num">{deals ? `${deals.length} deals · ${fmtMoney(totalOpen)} open` : "Loading…"}</p>
 
       <div className="flex gap-4 overflow-x-auto pb-4 -mx-1 px-1">
         {columns.map((stage, i) => {
@@ -180,7 +185,7 @@ function Board() {
                         {d.contact && <div className="text-[12px] text-[var(--text-3)] truncate">{d.contact.name}{d.contact.title ? ` · ${d.contact.title}` : ""}</div>}
                         {d.nextAction && <div className="mt-1.5 text-[12px] text-[var(--text-2)] truncate">{d.nextAction}</div>}
                         <div className="mt-2 flex items-center justify-between gap-2">
-                          <span className="text-[12px] num text-[var(--text-3)]">{d.valueCents ? fmtMoney(d.valueCents) : "—"}</span>
+                          <span className="text-[12px] num text-[var(--text-3)]">{d.valueCents ? `${fmtMoney(d.valueCents)}${d.recurring ? "/mo" : ""}` : "—"}</span>
                           {chip && <Pill tone={chip.tone}>{chip.label}</Pill>}
                         </div>
                       </button>

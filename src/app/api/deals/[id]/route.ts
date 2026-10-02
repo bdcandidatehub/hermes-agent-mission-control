@@ -39,6 +39,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (parsed == null) return NextResponse.json({ error: "invalid value" }, { status: 400 });
     data.valueCents = parsed;
   }
+  if (typeof b.recurring === "boolean") data.recurring = b.recurring;
 
   let stageEvent: string | null = null;
   if (typeof b.stage === "string" && b.stage !== existing.stage) {

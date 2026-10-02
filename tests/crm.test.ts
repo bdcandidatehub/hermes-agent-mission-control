@@ -42,17 +42,25 @@ describe("money", () => {
 });
 
 describe("summarizeVenture", () => {
-  it("counts open/won, excludes lost and other ventures, and derives MRR", () => {
+  it("counts open/won, excludes lost and other ventures, and derives MRR from won+recurring deals", () => {
     const s = summarizeVenture(venture, [
-      { ventureKey: "c", stage: "a", valueCents: 100 },
-      { ventureKey: "c", stage: "won", valueCents: 900 },
-      { ventureKey: "c", stage: "lost", valueCents: 5000 },
-      { ventureKey: "z", stage: "a", valueCents: 7 },
+      { ventureKey: "c", stage: "a", valueCents: 100, recurring: true },
+      { ventureKey: "c", stage: "won", valueCents: 900, recurring: true },
+      { ventureKey: "c", stage: "lost", valueCents: 5000, recurring: true },
+      { ventureKey: "z", stage: "a", valueCents: 7, recurring: true },
     ]);
-    assert.deepEqual([s.openDeals, s.openValueCents, s.wonDeals, s.mrrCents], [1, 100, 1, 900]);
+    assert.deepEqual([s.openDeals, s.openValueCents, s.wonDeals, s.wonValueCents, s.mrrCents], [1, 100, 1, 900, 900]);
   });
-  it("non-recurring ventures report no MRR", () => {
-    assert.equal(summarizeVenture({ ...venture, recurring: false }, [{ ventureKey: "c", stage: "won", valueCents: 900 }]).mrrCents, 0);
+  it("a won one-time deal counts toward wonValueCents but not MRR", () => {
+    const s = summarizeVenture(venture, [
+      { ventureKey: "c", stage: "won", valueCents: 900, recurring: true },
+      { ventureKey: "c", stage: "won", valueCents: 5000, recurring: false },
+    ]);
+    assert.deepEqual([s.wonDeals, s.wonValueCents, s.mrrCents], [2, 5900, 900]);
+  });
+  it("MRR is per-deal, independent of the venture's own recurring hint", () => {
+    const s = summarizeVenture({ ...venture, recurring: false }, [{ ventureKey: "c", stage: "won", valueCents: 900, recurring: true }]);
+    assert.equal(s.mrrCents, 900);
   });
   it("validates stages", () => {
     assert.ok(isValidStage(venture, "won"));

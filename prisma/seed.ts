@@ -100,6 +100,32 @@ async function main() {
       sortOrder: 0,
     },
   });
+  await prisma.venture.upsert({
+    where: { key: "ai-consulting" },
+    update: {},
+    create: {
+      key: "ai-consulting",
+      name: "AI Consulting",
+      stages: ["prospect", "contacted", "replied", "discovery_booked", "proposal_sent"],
+      wonStage: "won",
+      lostStage: "lost",
+      recurring: false, // most engagements are one-time; toggle per deal for retainers
+      sortOrder: 1,
+    },
+  });
+  await prisma.venture.upsert({
+    where: { key: "web-design-marketing" },
+    update: {},
+    create: {
+      key: "web-design-marketing",
+      name: "Web Design & Marketing",
+      stages: ["prospect", "contacted", "replied", "scoped", "proposal_sent"],
+      wonStage: "won",
+      lostStage: "lost",
+      recurring: false, // project fees are one-time; toggle per deal for hosting/maintenance retainers
+      sortOrder: 2,
+    },
+  });
   let i = 0;
   for (const p of playbooks) {
     await prisma.playbook.upsert({

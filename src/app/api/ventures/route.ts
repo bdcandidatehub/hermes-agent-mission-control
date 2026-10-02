@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const [ventures, deals] = await Promise.all([
     prisma.venture.findMany({ orderBy: { sortOrder: "asc" } }),
-    prisma.deal.findMany({ select: { ventureKey: true, stage: true, valueCents: true } }),
+    prisma.deal.findMany({ select: { ventureKey: true, stage: true, valueCents: true, recurring: true } }),
   ]);
   return NextResponse.json({
     ventures: ventures.map((v) => ({ ...v, summary: summarizeVenture(v, deals) })),

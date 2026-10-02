@@ -26,7 +26,7 @@ model Venture {
   stages    String[]                       // ordered open stages, e.g. ["prospect","contacted",...]
   wonStage  String     @default("won")
   lostStage String     @default("lost")
-  recurring Boolean    @default(false)     // true → won deals count toward MRR (valueCents is monthly)
+  recurring Boolean    @default(false)     // default for new deals' own `recurring` flag; MRR is computed per-deal, not from this
   sortOrder Int        @default(0)
   createdAt DateTime   @default(now())
   deals     Deal[]
@@ -83,7 +83,8 @@ model Deal {
   contact        Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
   title          String
   stage          String
-  valueCents     Int       @default(0)     // one-off price, or monthly price when venture.recurring
+  valueCents     Int       @default(0)     // one-off price, or monthly price when recurring
+  recurring      Boolean   @default(true)  // true → counts toward MRR when won (valueCents is monthly)
   currency       String    @default("CAD")
   nextAction     String?
   nextActionDue  DateTime?

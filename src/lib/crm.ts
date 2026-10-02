@@ -6,7 +6,7 @@ export interface VentureCfg {
   stages: string[]; // ordered open stages
   wonStage: string;
   lostStage: string;
-  recurring: boolean; // won deals count toward MRR
+  recurring: boolean; // default for new deals' own `recurring` flag; MRR is computed per-deal
 }
 
 export const CONSENT_BASES = ["none", "express", "implied_existing", "implied_conspicuous"] as const;
@@ -39,6 +39,7 @@ export interface DealLite {
   ventureKey: string;
   stage: string;
   valueCents: number;
+  recurring: boolean;
 }
 
 export interface VentureSummary {
@@ -48,20 +49,22 @@ export interface VentureSummary {
   openValueCents: number;
   wonDeals: number;
   wonValueCents: number;
-  mrrCents: number; // == wonValueCents when the venture is recurring, else 0
+  mrrCents: number; // sum of valueCents for won deals with their own `recurring` flag set
 }
 
 export function summarizeVenture(v: VentureCfg, deals: DealLite[]): VentureSummary {
   const counts: Record<string, number> = {};
   for (const s of allStages(v)) counts[s] = 0;
-  let openDeals = 0, openValueCents = 0, wonDeals = 0, wonValueCents = 0;
+  let openDeals = 0, openValueCents = 0, wonDeals = 0, wonValueCents = 0, mrrCents = 0;
   for (const d of deals) {
     if (d.ventureKey !== v.key) continue;
     counts[d.stage] = (counts[d.stage] ?? 0) + 1;
-    if (d.stage === v.wonStage) { wonDeals++; wonValueCents += d.valueCents; }
-    else if (d.stage !== v.lostStage) { openDeals++; openValueCents += d.valueCents; }
+    if (d.stage === v.wonStage) {
+      wonDeals++; wonValueCents += d.valueCents;
+      if (d.recurring) mrrCents += d.valueCents;
+    } else if (d.stage !== v.lostStage) { openDeals++; openValueCents += d.valueCents; }
   }
-  return { key: v.key, counts, openDeals, openValueCents, wonDeals, wonValueCents, mrrCents: v.recurring ? wonValueCents : 0 };
+  return { key: v.key, counts, openDeals, openValueCents, wonDeals, wonValueCents, mrrCents };
 }
 
 export type DueBucket = "overdue" | "today" | "soon" | "later" | "none";

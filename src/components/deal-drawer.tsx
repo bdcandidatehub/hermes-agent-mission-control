@@ -19,7 +19,7 @@ interface Run {
 interface Activity { id: string; type: string; summary: string; meta: { from?: string; to?: string; requestId?: string } | null; occurredAt: string }
 interface Detail {
   deal: {
-    id: string; title: string; stage: string; valueCents: number; nextAction: string | null; nextActionDue: string | null;
+    id: string; title: string; stage: string; valueCents: number; recurring: boolean; nextAction: string | null; nextActionDue: string | null;
     notes: string | null; lostReason: string | null;
     company: { id: string; name: string; website: string | null; industry: string | null; size: string | null; location: string | null };
     contact: { id: string; name: string; email: string | null; title: string | null; linkedinUrl: string | null; consentBasis: string; unsubscribedAt: string | null } | null;
@@ -219,7 +219,7 @@ export function DealDrawer({
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="eyebrow">{venture.recurring ? "Monthly value (CAD)" : "Value (CAD)"}</span>
+                  <span className="eyebrow">{d.recurring ? "Monthly value (CAD)" : "Value (CAD)"}</span>
                   <input key={d.valueCents} className={`${INPUT} mt-1`} inputMode="decimal" defaultValue={d.valueCents ? String(d.valueCents / 100) : ""} placeholder="0"
                     onBlur={(e) => { const v = e.target.value.trim(); if (v !== String(d.valueCents / 100) && !(v === "" && d.valueCents === 0)) patch(`/api/deals/${d.id}`, { value: v === "" ? "0" : v }); }} />
                 </label>
@@ -229,6 +229,10 @@ export function DealDrawer({
                     onChange={(e) => patch(`/api/deals/${d.id}`, { nextActionDue: e.target.value || null })} />
                 </label>
               </div>
+              <label className="flex items-center gap-2 text-[13px] text-[var(--text-2)]">
+                <input type="checkbox" checked={d.recurring} onChange={(e) => patch(`/api/deals/${d.id}`, { recurring: e.target.checked })} />
+                Recurring — counts toward MRR
+              </label>
               <label className="block">
                 <span className="eyebrow">Next action</span>
                 <input key={`na-${d.nextAction}`} className={`${INPUT} mt-1`} defaultValue={d.nextAction ?? ""} placeholder="e.g. Send intro email"
@@ -239,7 +243,7 @@ export function DealDrawer({
                 <textarea key={`notes-${d.notes}`} className={`${INPUT} mt-1 min-h-[72px]`} defaultValue={d.notes ?? ""} placeholder="Anything Hermes should know (used in playbooks)"
                   onBlur={(e) => { if (e.target.value !== (d.notes ?? "")) patch(`/api/deals/${d.id}`, { notes: e.target.value }); }} />
               </label>
-              {d.valueCents > 0 && <p className="text-[12px] text-[var(--text-3)]">{fmtMoney(d.valueCents)}{venture.recurring ? " / month" : ""}</p>}
+              {d.valueCents > 0 && <p className="text-[12px] text-[var(--text-3)]">{fmtMoney(d.valueCents)}{d.recurring ? " / month" : ""}</p>}
             </Panel>
 
             <Panel className="p-4 space-y-3">
@@ -266,7 +270,7 @@ export function DealDrawer({
 
             <section className="space-y-3">
               <p className="eyebrow">Hermes playbooks</p>
-              {playbooks.length === 0 && <p className="text-[12.5px] text-[var(--text-3)]">No playbooks yet. Run `npm run db:seed`.</p>}
+              {playbooks.length === 0 && <p className="text-[12.5px] text-[var(--text-3)]">No playbooks configured for {venture.name} yet.</p>}
               {playbooks.map((pb) => (
                 <Panel key={pb.key} className="p-3 space-y-2">
                   <div className="flex items-center justify-between gap-3">

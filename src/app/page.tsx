@@ -155,7 +155,7 @@ export default function Home() {
                     <div className="flex items-baseline justify-between gap-4">
                       <h3 className="text-[15px] font-semibold text-[var(--text)]">{v.name}</h3>
                       <div className="text-[12.5px] text-[var(--text-3)] num">
-                        {v.summary.openDeals} open · {fmtMoney(v.summary.openValueCents)}{v.recurring ? "/mo" : ""} · {v.summary.wonDeals} won
+                        {v.summary.openDeals} open · {fmtMoney(v.summary.openValueCents)} · {v.summary.wonDeals} won
                       </div>
                     </div>
                     <div className="mt-4 grid gap-2" style={{ gridTemplateColumns: `repeat(${v.stages.length}, minmax(0, 1fr))` }}>
