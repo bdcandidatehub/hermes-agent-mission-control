@@ -198,7 +198,7 @@ async function mirrorWikiConfig() {
 async function mirrorHealth() {
   let online = false, gateway = "unknown", detail = "";
   try {
-    const out = await hermes(["status"], { timeout: 12000 });
+    const out = await hermes(["status"], { timeout: 45000 });
     detail = out.slice(0, 4000);
     ({ online, gateway } = parseStatus(out));
   } catch (e) { detail = e.message.split("\n")[0]; }
