@@ -18,6 +18,7 @@ export const KIND_TIERS: Record<string, Tier> = {
   "briefing.generate": "auto",
   "memory.write": "auto", // path-confined to the wiki dir by the bridge
   "friday.chat": "auto", // a message the operator typed or spoke to Friday; created only by /api/friday/chat
+  "agent.chat": "auto", // a message the operator typed to a named agent; created only by /api/agents/chat
   "source.add": "auto", // creates a NEW note in the vault's sources folder; never overwrites
   "cron.create": "approve",
   "cron.edit": "approve",
