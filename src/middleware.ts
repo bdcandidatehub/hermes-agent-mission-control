@@ -1,9 +1,20 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+import { agentForKey, presentedKey } from '@/lib/agent-auth';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Agent API: authorized ONLY by a per-agent key (AGENT_API_KEYS), nothing else. This runs before the dev bypass
+  // so local dev exercises the same path, and it stamps the verified agent id over anything the client sent.
+  if (pathname.startsWith('/api/agent/')) {
+    const agent = agentForKey(process.env.AGENT_API_KEYS, presentedKey(request.headers));
+    if (!agent) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const headers = new Headers(request.headers);
+    headers.set('x-agent-id', agent);
+    return NextResponse.next({ request: { headers } });
+  }
 
   // DEV-ONLY local bypass (never active on Vercel preview/prod builds).
   if (process.env.NODE_ENV === 'development') {
