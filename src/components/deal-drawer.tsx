@@ -113,6 +113,45 @@ function RunCard({ run, handoff }: { run: Run; handoff: Handoff }) {
   );
 }
 
+function ContactForm({ dealId, changing, onSaved, onCancel }: { dealId: string; changing: boolean; onSaved: () => Promise<void>; onCancel: () => void }) {
+  const [f, setF] = useState({ name: "", title: "", email: "", linkedinUrl: "", consentBasis: "none" });
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setErr(null);
+    const r = await fetch(`/api/deals/${dealId}/contact`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
+    const j = await r.json().catch(() => ({}));
+    setSaving(false);
+    if (!r.ok) { setErr(j.error ?? "Couldn't save the contact"); return; }
+    await onSaved();
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-3 rounded-[var(--r-md,10px)] border border-white/[0.07] p-3">
+      <p className="text-[12.5px] text-[var(--text-3)]">{changing ? "Replace this deal's contact." : "Who should outreach on this deal go to?"}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block"><span className="eyebrow">Name *</span><input required autoFocus className={`${INPUT} mt-1`} value={f.name} onChange={set("name")} /></label>
+        <label className="block"><span className="eyebrow">Title</span><input className={`${INPUT} mt-1`} value={f.title} onChange={set("title")} placeholder="HR Director" /></label>
+        <label className="block"><span className="eyebrow">Email</span><input type="email" className={`${INPUT} mt-1`} value={f.email} onChange={set("email")} /></label>
+        <label className="block"><span className="eyebrow">LinkedIn</span><input className={`${INPUT} mt-1`} value={f.linkedinUrl} onChange={set("linkedinUrl")} placeholder="linkedin.com/in/…" /></label>
+      </div>
+      <label className="block">
+        <span className="eyebrow">CASL consent basis</span>
+        <select className={`${INPUT} mt-1`} value={f.consentBasis} onChange={set("consentBasis")}>{CONSENT_BASES.map((c) => <option key={c} value={c}>{stageLabel(c)}</option>)}</select>
+        <span className="mt-1 block text-[11.5px] text-[var(--text-3)]">&quot;None&quot; is the safe default. Having someone&apos;s email isn&apos;t consent to message them.</span>
+      </label>
+      {err && <p className="text-[12.5px] text-[var(--down)]" role="alert">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" type="submit" variant="primary" disabled={saving || !f.name.trim()}>{saving ? "Saving…" : changing ? "Replace contact" : "Add contact"}</Button>
+      </div>
+    </form>
+  );
+}
+
 export function DealDrawer({
   dealId, venture, playbooks, onClose, onChanged,
 }: {
@@ -125,6 +164,7 @@ export function DealDrawer({
   const [busy, setBusy] = useState<string | null>(null);
   const [actType, setActType] = useState<string>("note");
   const [actText, setActText] = useState("");
+  const [contactForm, setContactForm] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -253,6 +293,11 @@ export function DealDrawer({
                   <div>
                     <p className="text-[14px] font-medium text-[var(--text)]">{d.contact.name}</p>
                     <p className="text-[12.5px] text-[var(--text-3)]">{[d.contact.title, d.contact.email].filter(Boolean).join(" · ") || "No details"}</p>
+                    {safeHttpUrl(d.contact.linkedinUrl) && (
+                      <a className="mt-1 inline-flex items-center gap-1 text-[12px] text-[var(--text-3)] hover:text-[var(--text)]" href={safeHttpUrl(d.contact.linkedinUrl)!} target="_blank" rel="noopener noreferrer">
+                        LinkedIn profile<ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
                   </div>
                   <label className="block">
                     <span className="eyebrow">CASL consent basis</span>
@@ -264,8 +309,18 @@ export function DealDrawer({
                     <input type="checkbox" checked={!!d.contact.unsubscribedAt} onChange={(e) => patch(`/api/contacts/${d.contact!.id}`, { unsubscribed: e.target.checked })} />
                     Unsubscribed — no outreach drafts
                   </label>
+                  {!contactForm && <button className="text-[12px] text-[var(--text-3)] hover:text-[var(--text)]" onClick={() => setContactForm(true)}>Change contact</button>}
                 </>
-              ) : <p className="text-[12.5px] text-[var(--text-3)]">No contact on this deal. Outreach playbooks need one.</p>}
+              ) : !contactForm && (
+                <>
+                  <p className="text-[12.5px] text-[var(--text-3)]">No contact on this deal. Outreach playbooks need one.</p>
+                  <Button size="sm" onClick={() => setContactForm(true)}>Add contact</Button>
+                </>
+              )}
+              {contactForm && (
+                <ContactForm dealId={d.id} changing={!!d.contact} onCancel={() => setContactForm(false)}
+                  onSaved={async () => { setContactForm(false); await load(); onChanged(); }} />
+              )}
             </Panel>
 
             <section className="space-y-3">
