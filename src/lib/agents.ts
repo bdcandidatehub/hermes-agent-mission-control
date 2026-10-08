@@ -12,7 +12,7 @@ export const AGENT_DIRECTORY: Record<string, { name: string; emoji: string; role
   paula: { name: "Paula", emoji: "🎨", role: "Design · Creative Director" },
   video: { name: "Video", emoji: "🎬", role: "Video Creation" },
   sarah: { name: "Sarah", emoji: "✂️", role: "Video Editing" },
-  "email-calendar": { name: "Email & Calendar", emoji: "📅", role: "Inbox & Schedule Assistant" },
+  "email-calendar": { name: "Alex", emoji: "📅", role: "Inbox & Schedule Assistant" }, // Hermes profile id is still email-calendar
 };
 
 // Tony's Hermes profile used to be called "builder"; tasks assigned under the old name still count as his.
