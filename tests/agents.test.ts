@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyTurn, composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "../hermes-bridge/agents.mjs";
+import { classifyActivity, classifyTurn, hasLiveLease, composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "../hermes-bridge/agents.mjs";
 import { buildOrgTree, buildRoster, liveLabel, AGENT_DIRECTORY, type OrgNode, type RosterAgent } from "../src/lib/agents";
 
 // Captured from `hermes profile list` on the VM.
@@ -181,5 +181,25 @@ describe("classifyTurn (is an agent mid-turn?)", () => {
     assert.equal(classifyTurn(null, now).working, false);
     assert.equal(classifyTurn({ role: "user" }, now).working, false);
     assert.equal(classifyTurn(msg({ role: "user" }, -60), now).working, false);
+  });
+});
+
+describe("classifyActivity (live turn leases)", () => {
+  const now = 1_000_000;
+  const idleLast = { role: "assistant", tool_calls: null, timestamp: now - 3, source: "cli" };
+  it("an unexpired lease means working even when the newest message is a finished reply", () => {
+    assert.deepEqual(classifyActivity({ leases: [{ expires_at: now + 250 }], last: idleLast }, now), { working: true, source: "cli" });
+  });
+  it("expired leases left by a crashed process do not count", () => {
+    assert.equal(hasLiveLease([{ expires_at: now - 1 }, { expires_at: now }], now), false);
+    assert.equal(classifyActivity({ leases: [{ expires_at: now - 500 }], last: idleLast }, now).working, false);
+  });
+  it("falls back to the newest message when there is no lease", () => {
+    assert.equal(classifyActivity({ leases: [], last: { ...idleLast, role: "user" } }, now).working, true);
+    assert.equal(classifyActivity({ leases: null, last: idleLast }, now).working, false);
+  });
+  it("tolerates a lease with no source message and bad rows", () => {
+    assert.deepEqual(classifyActivity({ leases: [{ expires_at: String(now + 60) }], last: null }, now), { working: true, source: undefined });
+    assert.equal(hasLiveLease([null as never, {}, { expires_at: null }], now), false);
   });
 });
