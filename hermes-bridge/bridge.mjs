@@ -25,7 +25,7 @@ import path from "node:path";
 import os from "node:os";
 import { parseStatus } from "./status.mjs";
 import { composeQuery, parseChatOutput } from "./friday.mjs";
-import { classifyTurn, composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "./agents.mjs";
+import { classifyActivity, composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "./agents.mjs";
 import { shouldGenerateBrief } from "./brief.mjs";
 import { deriveTitle, extractWikilinks, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
 import { detectVault, writeSourceNote } from "./vault.mjs";
@@ -222,8 +222,8 @@ async function mirrorAgents() {
   await setStore("hermes-agents", { agents: list, syncedAt: new Date().toISOString() });
 }
 
-// Who is working right now? Each Hermes profile keeps its own state.db; the newest message tells whether a turn is in
-// progress (see classifyTurn). Needs HERMES_DATA_DIR and Node's built-in SQLite (22.13+); without either it quietly does nothing.
+// Who is working right now? Each Hermes profile keeps its own state.db; a live turn lease or the newest message tells whether a turn is in
+// progress (see classifyActivity). Needs HERMES_DATA_DIR and Node's built-in SQLite (22.13+); without either it quietly does nothing.
 let sqliteMod;
 async function loadSqlite() {
   if (sqliteMod === undefined) { try { sqliteMod = await import("node:sqlite"); } catch { sqliteMod = null; } }
@@ -242,7 +242,9 @@ async function mirrorActivity() {
     try {
       conn = new sqlite.DatabaseSync(db, { readOnly: true });
       const m = conn.prepare("SELECT m.role, m.tool_calls, m.timestamp, s.source FROM messages m LEFT JOIN sessions s ON s.id = m.session_id ORDER BY m.id DESC LIMIT 1").get();
-      const t = classifyTurn(m, Date.now() / 1000);
+      let leases = [];
+      try { leases = conn.prepare("SELECT expires_at FROM session_turn_leases").all(); } catch { /* older Hermes: no lease table */ }
+      const t = classifyActivity({ leases, last: m }, Date.now() / 1000);
       if (t.working) profiles[id] = { source: t.source };
     } catch { /* locked or unreadable this tick: leave this agent out */ }
     finally { try { conn?.close(); } catch { /* ignore */ } }

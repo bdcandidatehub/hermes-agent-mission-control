@@ -73,3 +73,20 @@ export function classifyTurn(m, nowSec, windowSec = 600) {
   const waiting = m.role === "user" || m.role === "tool" || (m.role === "assistant" && hasCalls);
   return waiting ? { working: true, source: m.source || undefined } : { working: false };
 }
+
+// A turn holds a lease in the profile's session_turn_leases table while the model is working (it expires on its own after
+// about five minutes, and a crashed process leaves an expired row behind). A lease that hasn't expired means working.
+// Hermes only writes a turn's messages once the turn finishes, so the leases are the primary signal and the newest message
+// (classifyTurn) is a fallback for turns that haven't taken a lease yet.
+/** @param {{ expires_at?: number|string|null }[] | null | undefined} leases @param {number} nowSec @returns {boolean} */
+export function hasLiveLease(leases, nowSec) {
+  return Array.isArray(leases) && leases.some((l) => l && l.expires_at != null && Number(l.expires_at) > nowSec);
+}
+
+/** @param {{ leases?: { expires_at?: number|string|null }[] | null, last?: Parameters<typeof classifyTurn>[0] }} s
+ *  @param {number} nowSec @returns {{ working: boolean, source?: string }} */
+export function classifyActivity({ leases, last }, nowSec) {
+  const t = classifyTurn(last, nowSec);
+  if (t.working) return t;
+  return hasLiveLease(leases, nowSec) ? { working: true, source: last?.source || undefined } : { working: false };
+}
