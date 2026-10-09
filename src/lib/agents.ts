@@ -8,20 +8,19 @@ export const MAX_AGENT_MESSAGE_CHARS = 2000;
 export interface DirectoryEntry {
   name: string; emoji: string; role: string;
   reportsTo?: string;     // profile id of the manager; leave out for the head of a team
-  order?: number;         // left-to-right position among the heads of teams
   subagents?: boolean;    // spawns throwaway helpers (shown as a "Subagents" box under the agent)
 }
 
-// Keys are Hermes profile ids. Key order is the order agents are listed in.
+// Keys are Hermes profile ids. Key order is the order agents are listed in, and the order reports appear under a manager.
 export const AGENT_DIRECTORY: Record<string, DirectoryEntry> = {
-  mason: { name: "Mason", emoji: "💼", role: "Sales · Outreach & Email", order: 0 },
+  default: { name: "Friday", emoji: "✨", role: "Chief of Staff · Orchestrator" },
+  mason: { name: "Mason", emoji: "💼", role: "Sales · Outreach & Email", reportsTo: "default" },
   "email-calendar": { name: "Alex", emoji: "📅", role: "Inbox & Schedule Assistant", reportsTo: "mason" }, // profile id is still email-calendar
-  default: { name: "Friday", emoji: "✨", role: "Chief of Staff · Orchestrator", order: 1 },
-  tony: { name: "Tony", emoji: "🛠️", role: "Engineering · Product Builder", reportsTo: "default", subagents: true },
-  "marketing-manager": { name: "Claire", emoji: "📣", role: "Marketing Manager", order: 2 }, // profile id is marketing-manager
+  "marketing-manager": { name: "Claire", emoji: "📣", role: "Marketing Manager", reportsTo: "default" }, // profile id is marketing-manager
   sarah: { name: "Sarah", emoji: "✂️", role: "Video Editing", reportsTo: "marketing-manager" },
   video: { name: "Video", emoji: "🎬", role: "Video Creation", reportsTo: "marketing-manager" },
   paula: { name: "Paula", emoji: "🎨", role: "Design · Creative Director", reportsTo: "marketing-manager" },
+  tony: { name: "Tony", emoji: "🛠️", role: "Engineering · Product Builder", reportsTo: "default", subagents: true },
 };
 
 // Tony's Hermes profile used to be called "builder"; tasks assigned under the old name still count as his.
@@ -35,7 +34,7 @@ export interface TaskLite { id: string; title: string; assignee: string | null; 
 export interface AgentActivity { title: string; status: string; result: string | null; at: string }
 export interface RosterAgent {
   id: string; name: string; emoji: string; role: string; isDefault: boolean; model: string; gateway: string;
-  reportsTo: string | null; hasSubagents: boolean; order: number | null;
+  reportsTo: string | null; hasSubagents: boolean;
   status: "working" | "idle"; currentTask?: string; lastActive?: string;
   tasksDone: number; tasksOpen: number; recentActivity: AgentActivity[];
 }
@@ -79,7 +78,6 @@ export function buildRoster(mirrored: MirroredAgent[], tasks: TaskLite[], live: 
       gateway: a.gateway,
       reportsTo: dir?.reportsTo ?? null,
       hasSubagents: !!dir?.subagents,
-      order: dir?.order ?? null,
       status: working || inTurn ? "working" : "idle",
       currentTask: working?.title ?? (inTurn ? liveLabel(inTurn.source) : undefined),
       lastActive: mine[0] ? iso(mine[0].updatedAt) : undefined,
@@ -93,7 +91,7 @@ export function buildRoster(mirrored: MirroredAgent[], tasks: TaskLite[], live: 
 export interface OrgNode { agent: RosterAgent; children: OrgNode[] }
 
 // The reporting structure as trees. An agent whose manager isn't on the roster (or who has none) heads its own team.
-// Heads of teams are placed by `order`, then in roster order, so the chart reads the same way every time.
+// Heads and reports appear in roster (directory) order, so the chart reads the same way every time.
 export function buildOrgTree(agents: RosterAgent[]): OrgNode[] {
   const byId = new Map(agents.map((a) => [a.id, a]));
   const kids = new Map<string, RosterAgent[]>();
@@ -103,7 +101,6 @@ export function buildOrgTree(agents: RosterAgent[]): OrgNode[] {
     if (boss) kids.set(boss, [...(kids.get(boss) ?? []), a]);
     else heads.push(a);
   }
-  heads.sort((x, y) => (x.order ?? 1000) - (y.order ?? 1000)); // stable: ties keep roster order
 
   const seen = new Set<string>();
   const build = (a: RosterAgent): OrgNode => {

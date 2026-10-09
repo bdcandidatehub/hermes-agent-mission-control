@@ -81,7 +81,7 @@ describe("buildRoster", () => {
   const by = (id: string) => roster.find((a) => a.id === id)!;
 
   it("lists known agents in the directory's order, then unknown profiles", () => {
-    assert.deepEqual(roster.map((a) => a.id), ["mason", "default", "tony", "newbie"]);
+    assert.deepEqual(roster.map((a) => a.id), ["default", "mason", "tony", "newbie"]);
   });
   it("uses the directory for names/roles and a safe fallback for new profiles", () => {
     assert.equal(by("mason").name, AGENT_DIRECTORY.mason.name);
@@ -130,15 +130,19 @@ describe("live activity", () => {
 describe("reporting structure", () => {
   const names = (n: OrgNode): unknown => (n.children.length ? { [n.agent.name]: n.children.map(names) } : n.agent.name);
   const trees = buildOrgTree(buildRoster(AGENTS_LIKE_VM, []));
-  it("matches the org chart: Mason > Alex, Friday > Tony, Claire > Sarah, Video, Paula, left to right", () => {
-    assert.deepEqual(trees.map(names), [{ Mason: ["Alex"] }, { Friday: ["Tony"] }, { Claire: ["Sarah", "Video", "Paula"] }]);
+  it("matches the org chart: Friday heads Mason (> Alex), Claire (> Sarah, Video, Paula) and Tony", () => {
+    assert.deepEqual(trees.map(names), [{ Friday: [{ Mason: ["Alex"] }, { Claire: ["Sarah", "Video", "Paula"] }, "Tony"] }]);
   });
   it("marks Tony as having subagents", () => {
-    const tony = trees[1].children[0].agent;
+    const tony = trees[0].children[2].agent;
     assert.deepEqual([tony.name, tony.hasSubagents], ["Tony", true]);
   });
   it("Claire's profile id is marketing-manager", () => {
     assert.equal(AGENT_DIRECTORY["marketing-manager"].name, "Claire");
+  });
+  it("if Friday isn't on the roster, her direct reports head their own teams", () => {
+    const t = buildOrgTree(buildRoster(AGENTS_LIKE_VM.filter((a) => a.id !== "default"), []));
+    assert.deepEqual(t.map((n) => n.agent.name), ["Mason", "Claire", "Tony"]);
   });
   it("a new profile with no directory entry heads its own team, after the known ones", () => {
     const t = buildOrgTree(buildRoster([...AGENTS_LIKE_VM, { id: "newbie", name: "newbie", isDefault: false, model: "m", gateway: "g" }], []));
