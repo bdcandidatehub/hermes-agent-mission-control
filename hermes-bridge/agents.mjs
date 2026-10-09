@@ -57,3 +57,19 @@ export function composeAgentQuery({ message }) {
     String(message).trim()
   );
 }
+
+// Is an agent in the middle of a turn? Judged from the newest message in its session database:
+//   a user message or tool result is waiting for the model, and an assistant message with tool calls is waiting for the tools,
+//   so the agent is working; a plain assistant reply means the turn is finished. A turn that has shown no sign of life for
+//   `windowSec` is treated as abandoned (a crash shouldn't leave an agent "working" forever).
+/** @param {{ role?: string, tool_calls?: unknown, timestamp?: number|string|null, source?: string|null } | null | undefined} m
+ *  @param {number} nowSec @param {number} [windowSec] @returns {{ working: boolean, source?: string }} */
+export function classifyTurn(m, nowSec, windowSec = 600) {
+  if (!m || m.timestamp == null) return { working: false };
+  const age = nowSec - Number(m.timestamp);
+  if (!Number.isFinite(age) || age < -5 || age > windowSec) return { working: false };
+  const calls = typeof m.tool_calls === "string" ? m.tool_calls.trim() : m.tool_calls;
+  const hasCalls = !!calls && calls !== "[]" && calls !== "null" && !(Array.isArray(calls) && calls.length === 0);
+  const waiting = m.role === "user" || m.role === "tool" || (m.role === "assistant" && hasCalls);
+  return waiting ? { working: true, source: m.source || undefined } : { working: false };
+}

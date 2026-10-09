@@ -25,7 +25,7 @@ import path from "node:path";
 import os from "node:os";
 import { parseStatus } from "./status.mjs";
 import { composeQuery, parseChatOutput } from "./friday.mjs";
-import { composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "./agents.mjs";
+import { classifyTurn, composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "./agents.mjs";
 import { shouldGenerateBrief } from "./brief.mjs";
 import { deriveTitle, extractWikilinks, parseEntry, walkMd, writeWikiEntry as writeWiki } from "./wiki.mjs";
 import { detectVault, writeSourceNote } from "./vault.mjs";
@@ -220,6 +220,39 @@ async function mirrorAgents() {
   agentRoster = list.map((a) => a.id);
   agentsMirroredAt = Date.now();
   await setStore("hermes-agents", { agents: list, syncedAt: new Date().toISOString() });
+}
+
+// Who is working right now? Each Hermes profile keeps its own state.db; the newest message tells whether a turn is in
+// progress (see classifyTurn). Needs HERMES_DATA_DIR and Node's built-in SQLite (22.13+); without either it quietly does nothing.
+let sqliteMod;
+async function loadSqlite() {
+  if (sqliteMod === undefined) { try { sqliteMod = await import("node:sqlite"); } catch { sqliteMod = null; } }
+  return sqliteMod;
+}
+let activityJson = "", activityWrittenAt = 0;
+async function mirrorActivity() {
+  if (!HERMES_DATA_DIR || !agentRoster.length) return;
+  const sqlite = await loadSqlite();
+  if (!sqlite) return;
+  const profiles = {};
+  for (const id of agentRoster) {
+    const db = path.join(HERMES_DATA_DIR, id === "default" ? "" : path.join("profiles", id), "state.db");
+    if (!fs.existsSync(db)) continue;
+    let conn;
+    try {
+      conn = new sqlite.DatabaseSync(db, { readOnly: true });
+      const m = conn.prepare("SELECT m.role, m.tool_calls, m.timestamp, s.source FROM messages m LEFT JOIN sessions s ON s.id = m.session_id ORDER BY m.id DESC LIMIT 1").get();
+      const t = classifyTurn(m, Date.now() / 1000);
+      if (t.working) profiles[id] = { source: t.source };
+    } catch { /* locked or unreadable this tick: leave this agent out */ }
+    finally { try { conn?.close(); } catch { /* ignore */ } }
+  }
+  const json = JSON.stringify(profiles);
+  // rewrite when it changes, and at least every 30s so the website can tell the bridge is still watching
+  if (json !== activityJson || Date.now() - activityWrittenAt > 30_000) {
+    await setStore("hermes-activity", { profiles, syncedAt: new Date().toISOString() });
+    activityJson = json; activityWrittenAt = Date.now();
+  }
 }
 
 async function mirrorHealth() {
@@ -450,6 +483,7 @@ async function main() {
   loop("queue", POLL_MS, processQueue);
   loop("friday", 700, processFriday);
   loop("agents", 900, processAgentChat);
+  loop("activity", 5000, mirrorActivity);
   loop("mirror", MIRROR_MS, mirrorTick);
   loop("brief", 60_000, maybeDailyBrief);
 }

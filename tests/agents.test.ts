@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "../hermes-bridge/agents.mjs";
-import { buildRoster, AGENT_DIRECTORY } from "../src/lib/agents";
+import { classifyTurn, composeAgentQuery, modelFromConfig, parseProfileList, validProfileId } from "../hermes-bridge/agents.mjs";
+import { buildOrgTree, buildRoster, liveLabel, AGENT_DIRECTORY, type OrgNode, type RosterAgent } from "../src/lib/agents";
 
 // Captured from `hermes profile list` on the VM.
 const TABLE = `
@@ -80,8 +80,8 @@ describe("buildRoster", () => {
   const roster = buildRoster(mirrored, tasks);
   const by = (id: string) => roster.find((a) => a.id === id)!;
 
-  it("orders Friday first, then known agents, then unknown profiles", () => {
-    assert.deepEqual(roster.map((a) => a.id), ["default", "mason", "tony", "newbie"]);
+  it("lists known agents in the directory's order, then unknown profiles", () => {
+    assert.deepEqual(roster.map((a) => a.id), ["mason", "default", "tony", "newbie"]);
   });
   it("uses the directory for names/roles and a safe fallback for new profiles", () => {
     assert.equal(by("mason").name, AGENT_DIRECTORY.mason.name);
@@ -99,5 +99,83 @@ describe("buildRoster", () => {
   });
   it("only Friday is flagged as the default (chat happens on Today)", () => {
     assert.deepEqual(roster.filter((a) => a.isDefault).map((a) => a.id), ["default"]);
+  });
+});
+
+const AGENTS_LIKE_VM = ["default", "email-calendar", "marketing-manager", "mason", "paula", "sarah", "tony", "video"].map((id) => ({
+  id, name: id, isDefault: id === "default", model: "m", gateway: "running",
+}));
+
+describe("live activity", () => {
+  const roster = (live = {}) => buildRoster(AGENTS_LIKE_VM, [], live);
+  const by = (r: RosterAgent[], id: string) => r.find((a) => a.id === id)!;
+  it("an agent mid-conversation is working even with nothing on the board", () => {
+    const r = roster({ default: { source: "telegram" } });
+    assert.deepEqual([by(r, "default").status, by(r, "default").currentTask], ["working", "Replying on Telegram"]);
+    assert.equal(by(r, "mason").status, "idle");
+  });
+  it("a board task's title wins over the generic live label", () => {
+    const r = buildRoster(AGENTS_LIKE_VM, [{ id: "1", title: "Scan deals", assignee: "mason", status: "running", result: null, updatedAt: new Date() }], { mason: {} });
+    assert.equal(by(r, "mason").currentTask, "Scan deals");
+  });
+  it("labels each kind of live work plainly", () => {
+    assert.deepEqual([liveLabel("cron"), liveLabel("telegram"), liveLabel("desktop"), liveLabel(undefined)], ["Running a scheduled job", "Replying on Telegram", "In a conversation", "In a conversation"]);
+  });
+  it("ignores inherited object keys like 'constructor'", () => {
+    const r = buildRoster([{ id: "constructor", name: "x", isDefault: false, model: "m", gateway: "g" }], [], {});
+    assert.equal(r[0].status, "idle");
+  });
+});
+
+describe("reporting structure", () => {
+  const names = (n: OrgNode): unknown => (n.children.length ? { [n.agent.name]: n.children.map(names) } : n.agent.name);
+  const trees = buildOrgTree(buildRoster(AGENTS_LIKE_VM, []));
+  it("matches the org chart: Mason > Alex, Friday > Tony, Claire > Sarah, Video, Paula, left to right", () => {
+    assert.deepEqual(trees.map(names), [{ Mason: ["Alex"] }, { Friday: ["Tony"] }, { Claire: ["Sarah", "Video", "Paula"] }]);
+  });
+  it("marks Tony as having subagents", () => {
+    const tony = trees[1].children[0].agent;
+    assert.deepEqual([tony.name, tony.hasSubagents], ["Tony", true]);
+  });
+  it("Claire's profile id is marketing-manager", () => {
+    assert.equal(AGENT_DIRECTORY["marketing-manager"].name, "Claire");
+  });
+  it("a new profile with no directory entry heads its own team, after the known ones", () => {
+    const t = buildOrgTree(buildRoster([...AGENTS_LIKE_VM, { id: "newbie", name: "newbie", isDefault: false, model: "m", gateway: "g" }], []));
+    assert.equal(t[t.length - 1].agent.id, "newbie");
+  });
+  it("an agent whose manager isn't on the roster heads its own team instead of vanishing", () => {
+    const t = buildOrgTree(buildRoster(AGENTS_LIKE_VM.filter((a) => a.id !== "mason"), []));
+    assert.ok(t.some((n) => n.agent.id === "email-calendar"));
+  });
+  it("survives a reporting loop without recursing forever", () => {
+    const a = { ...buildRoster([AGENTS_LIKE_VM[1]], [])[0], id: "a", reportsTo: "b" };
+    const b = { ...a, id: "b", reportsTo: "a" };
+    const all = buildOrgTree([a, b]).flatMap(function walk(n: OrgNode): string[] { return [n.agent.id, ...n.children.flatMap(walk)]; });
+    assert.deepEqual([...new Set(all)].sort(), ["a", "b"]);
+  });
+});
+
+describe("classifyTurn (is an agent mid-turn?)", () => {
+  const now = 1_000_000;
+  const msg = (o: object, ago = 10) => ({ role: "assistant", tool_calls: null, timestamp: now - ago, source: "telegram", ...o });
+  it("a question waiting for an answer, or a tool result waiting for the model, means working", () => {
+    assert.deepEqual(classifyTurn(msg({ role: "user" }), now), { working: true, source: "telegram" });
+    assert.equal(classifyTurn(msg({ role: "tool" }), now).working, true);
+  });
+  it("an assistant message with tool calls means tools are running", () => {
+    assert.equal(classifyTurn(msg({ tool_calls: '[{"id":"1"}]' }), now).working, true);
+  });
+  it("a finished reply means idle, including empty tool-call placeholders", () => {
+    for (const tc of [null, "", "[]", "null"]) assert.equal(classifyTurn(msg({ tool_calls: tc }), now).working, false, String(tc));
+  });
+  it("an abandoned turn stops counting after the window", () => {
+    assert.equal(classifyTurn(msg({ role: "user" }, 599), now).working, true);
+    assert.equal(classifyTurn(msg({ role: "user" }, 601), now).working, false);
+  });
+  it("handles missing data and clock skew", () => {
+    assert.equal(classifyTurn(null, now).working, false);
+    assert.equal(classifyTurn({ role: "user" }, now).working, false);
+    assert.equal(classifyTurn(msg({ role: "user" }, -60), now).working, false);
   });
 });
